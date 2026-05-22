@@ -80,6 +80,36 @@
 
 			init();
 
+			function createTree() {
+
+				const tree = new THREE.Group();
+
+				const trunk = new THREE.Mesh(
+					new THREE.CylinderGeometry( 0.03, 0.05, 0.14, 8 ),
+					new THREE.MeshPhongMaterial( { color: 0x5c4033 } )
+				);
+				trunk.position.y = 0.07;
+				tree.add( trunk );
+
+				const green = 0x2d6a4f + Math.floor( Math.random() * 0x151510 );
+				const foliage = new THREE.Mesh(
+					new THREE.ConeGeometry( 0.16, 0.28, 8 ),
+					new THREE.MeshPhongMaterial( { color: green } )
+				);
+				foliage.position.y = 0.28;
+				tree.add( foliage );
+
+				const foliageTop = new THREE.Mesh(
+					new THREE.ConeGeometry( 0.11, 0.18, 8 ),
+					new THREE.MeshPhongMaterial( { color: green + 0x080808 } )
+				);
+				foliageTop.position.y = 0.46;
+				tree.add( foliageTop );
+
+				return tree;
+
+			}
+
 			function init() {
 
 				container = document.createElement( 'div' );
@@ -108,17 +138,15 @@
 
 				//
 
-				const geometry = new THREE.CylinderGeometry( 0.1, 0.1, 0.2, 32 ).translate( 0, 0.1, 0 );
-
 				function onSelect() {
 
 					if ( reticle.visible ) {
 
-						const material = new THREE.MeshPhongMaterial( { color: 0xffffff * Math.random() } );
-						const mesh = new THREE.Mesh( geometry, material );
-						reticle.matrix.decompose( mesh.position, mesh.quaternion, mesh.scale );
-						mesh.scale.y = Math.random() * 2 + 1;
-						scene.add( mesh );
+						const tree = createTree();
+						reticle.matrix.decompose( tree.position, tree.quaternion, tree.scale );
+						const scale = Math.random() * 1.2 + 0.8;
+						tree.scale.set( scale, scale, scale );
+						scene.add( tree );
 
 					}
 
