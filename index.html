@@ -10,18 +10,36 @@
 		<meta property="og:image" content="https://threejs.org/examples/screenshots/webxr_ar_hittest.jpg">
 		<style>
 			body { margin: 0; }
+			#version {
+				position: fixed;
+				top: 0;
+				left: 0;
+				right: 0;
+				z-index: 10000;
+				padding: 14px 10px;
+				text-align: center;
+				font-family: monospace;
+				font-size: 18px;
+				font-weight: 700;
+				color: #fff;
+				background: rgba(0, 0, 0, 0.9);
+				pointer-events: none;
+			}
+
 			#info {
-				position: absolute;
+				position: fixed;
+				top: 52px;
 				width: 100%;
 				padding: 10px;
 				box-sizing: border-box;
 				text-align: center;
-				z-index: 1;
+				z-index: 10000;
 				color: #fff;
 				font-family: monospace;
 				font-size: 13px;
 				line-height: 24px;
 				pointer-events: none;
+				text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 			}
 			#info a { pointer-events: auto; color: #fff; }
 
@@ -52,8 +70,8 @@
 	<body>
 
 		<!-- Update version time (HH:mm) whenever this file is edited -->
+		<div id="version">version: 22:49</div>
 		<div id="info">
-			version: 22:44<br/>
 			<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> ar - hit test<br/>
 		</div>
 
