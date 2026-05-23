@@ -320,7 +320,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:05</div>
+		<div id="version">version: 13:12</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -430,7 +430,8 @@
 					id: 'world-builder',
 					label: 'World Builder',
 					createPlacement: createWorldBuilderPlacement,
-					uniformScale: () => selectedWorldBuilderSpawnType !== 'fence'
+					uniformScale: () => selectedWorldBuilderSpawnType === 'tree',
+					fixedScale: () => selectedWorldBuilderSpawnType === 'fence'
 				} ) );
 
 				registerMiniGame( createHitTestPlacementGame( {
@@ -795,13 +796,16 @@
 
 			}
 
-			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false } ) {
+			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false, fixedScale = false } ) {
 
 				function create( { scene, renderer, controller1, controller2 } ) {
 
 					let reticle;
 					let hitTestSource = null;
 					let hitTestSourceRequested = false;
+					const placementPosition = new THREE.Vector3();
+					const placementQuaternion = new THREE.Quaternion();
+					const placementScale = new THREE.Vector3();
 
 					function onSelect() {
 
@@ -809,19 +813,33 @@
 
 							const object = createPlacement();
 							const baseScale = object.scale.clone();
-							reticle.matrix.decompose( object.position, object.quaternion, object.scale );
-							object.scale.multiply( baseScale );
+							reticle.matrix.decompose( placementPosition, placementQuaternion, placementScale );
 
-							const useUniformScale = typeof uniformScale === 'function' ? uniformScale() : uniformScale;
+							object.position.copy( placementPosition );
+							object.quaternion.copy( placementQuaternion );
 
-							if ( useUniformScale ) {
+							const useFixedScale = typeof fixedScale === 'function' ? fixedScale() : fixedScale;
 
-								const scale = Math.random() * 1.2 + 0.8;
-								object.scale.multiplyScalar( scale );
+							if ( useFixedScale ) {
+
+								object.scale.copy( baseScale );
 
 							} else {
 
-								object.scale.y *= Math.random() * 2 + 1;
+								object.scale.copy( placementScale ).multiply( baseScale );
+
+								const useUniformScale = typeof uniformScale === 'function' ? uniformScale() : uniformScale;
+
+								if ( useUniformScale ) {
+
+									const scale = Math.random() * 1.2 + 0.8;
+									object.scale.multiplyScalar( scale );
+
+								} else {
+
+									object.scale.y *= Math.random() * 2 + 1;
+
+								}
 
 							}
 
