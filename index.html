@@ -161,7 +161,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 12:17</div>
+		<div id="version">version: 12:22</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -631,7 +631,13 @@
 
 					const bulletTrails = [];
 					const bulletEnd = new THREE.Vector3();
+					const bulletStart = new THREE.Vector3();
+					const dashDirection = new THREE.Vector3();
+					const dashQuaternion = new THREE.Quaternion();
+					const forwardVector = new THREE.Vector3( 0, 0, 1 );
 					const shotQuaternion = new THREE.Quaternion();
+					const dashSegmentGeometry = new THREE.BoxGeometry( 0.025, 0.025, 0.1 );
+					const projectileGeometry = new THREE.SphereGeometry( 0.035, 8, 8 );
 					let xrSession = null;
 					let pendingPointerShot = null;
 					let pendingXRSelect = null;
@@ -640,8 +646,10 @@
 					const spawnIntervalMs = 1200;
 					const maxEnemies = 14;
 					const hitRadius = 0.28;
-					const bulletTrailLife = 0.18;
-					const maxBulletLength = 5;
+					const bulletTrailLife = 0.35;
+					const maxBulletLength = 6;
+					const muzzleOffset = 0.2;
+					const bulletSpeed = 18;
 
 					function getViewCamera() {
 
@@ -705,29 +713,57 @@
 					function spawnBulletTrail( origin, direction ) {
 
 						const normalizedDirection = direction.clone().normalize();
-						const trailLength = getBulletTrailLength( origin, normalizedDirection );
+						bulletStart.copy( origin ).addScaledVector( normalizedDirection, muzzleOffset );
+						const trailLength = getBulletTrailLength( bulletStart, normalizedDirection );
 
-						bulletEnd.copy( origin ).addScaledVector( normalizedDirection, trailLength );
+						dashQuaternion.setFromUnitVectors( forwardVector, normalizedDirection );
+						if ( Number.isNaN( dashQuaternion.x ) ) {
 
-						const geometry = new THREE.BufferGeometry().setFromPoints( [
-							origin.clone(),
-							bulletEnd.clone()
-						] );
+							dashQuaternion.identity();
 
-						const material = new THREE.LineDashedMaterial( {
+						}
+
+						const trailGroup = new THREE.Group();
+						const dashMaterial = new THREE.MeshBasicMaterial( {
 							color: 0xfff44d,
-							dashSize: 0.05,
-							gapSize: 0.03,
 							transparent: true,
-							opacity: 1
+							opacity: 1,
+							depthTest: false
 						} );
 
-						const line = new THREE.Line( geometry, material );
-						line.computeLineDistances();
-						scene.add( line );
+						const segmentStep = 0.16;
+						const segmentLength = 0.1;
+
+						for ( let distance = 0; distance < trailLength; distance += segmentStep ) {
+
+							const dash = new THREE.Mesh( dashSegmentGeometry, dashMaterial );
+							dash.position.copy( bulletStart ).addScaledVector( normalizedDirection, distance + segmentLength * 0.5 );
+							dash.quaternion.copy( dashQuaternion );
+							trailGroup.add( dash );
+
+						}
+
+						const projectileMaterial = new THREE.MeshBasicMaterial( {
+							color: 0xffffff,
+							transparent: true,
+							opacity: 1,
+							depthTest: false
+						} );
+						const projectile = new THREE.Mesh( projectileGeometry, projectileMaterial );
+						projectile.position.copy( bulletStart );
+						trailGroup.add( projectile );
+
+						trailGroup.renderOrder = 999;
+						scene.add( trailGroup );
 
 						bulletTrails.push( {
-							line,
+							group: trailGroup,
+							projectile,
+							materials: [ dashMaterial, projectileMaterial ],
+							start: bulletStart.clone(),
+							direction: normalizedDirection.clone(),
+							length: trailLength,
+							distance: 0,
 							remaining: bulletTrailLife,
 							maxLife: bulletTrailLife
 						} );
@@ -736,9 +772,13 @@
 
 					function removeBulletTrail( trail ) {
 
-						scene.remove( trail.line );
-						trail.line.geometry.dispose();
-						trail.line.material.dispose();
+						scene.remove( trail.group );
+
+						for ( const material of trail.materials ) {
+
+							material.dispose();
+
+						}
 
 					}
 
@@ -747,8 +787,17 @@
 						for ( let i = bulletTrails.length - 1; i >= 0; i -- ) {
 
 							const trail = bulletTrails[ i ];
+							trail.distance = Math.min( trail.length, trail.distance + bulletSpeed * delta );
+							trail.projectile.position.copy( trail.start ).addScaledVector( trail.direction, trail.distance );
+
 							trail.remaining -= delta;
-							trail.line.material.opacity = Math.max( 0, trail.remaining / trail.maxLife );
+							const fade = Math.max( 0, trail.remaining / trail.maxLife );
+
+							for ( const material of trail.materials ) {
+
+								material.opacity = fade;
+
+							}
 
 							if ( trail.remaining <= 0 ) {
 
@@ -961,6 +1010,8 @@
 							bulletTrails.length = 0;
 							gunSound.pause();
 							gunSound.currentTime = 0;
+							dashSegmentGeometry.dispose();
+							projectileGeometry.dispose();
 
 						},
 
