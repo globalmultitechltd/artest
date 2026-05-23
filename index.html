@@ -122,7 +122,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 11:31</div>
+		<div id="version">version: 11:34</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -156,7 +156,7 @@
 			const persistentSceneObjects = new Set();
 
 			let activeMiniGame = null;
-			let selectedMiniGameId = 'cylinders';
+			let selectedMiniGameId = 'trees';
 
 			const miniGames = {};
 			const AR_START_LABEL = 'START AR MINI GAME';
@@ -199,15 +199,19 @@
 				persistentSceneObjects.add( controller2 );
 
 				registerMiniGame( createHitTestPlacementGame( {
-					id: 'cylinders',
-					label: 'Cylinders',
-					createPlacementGeometry: () => new THREE.CylinderGeometry( 0.1, 0.1, 0.2, 32 ).translate( 0, 0.1, 0 )
+					id: 'trees',
+					label: 'Trees',
+					createPlacement: createTree,
+					uniformScale: true
 				} ) );
 
 				registerMiniGame( createHitTestPlacementGame( {
 					id: 'cuboids',
 					label: 'Cuboids',
-					createPlacementGeometry: () => new THREE.BoxGeometry( 0.2, 0.2, 0.2 ).translate( 0, 0.1, 0 )
+					createPlacement: () => new THREE.Mesh(
+						new THREE.BoxGeometry( 0.2, 0.2, 0.2 ).translate( 0, 0.1, 0 ),
+						new THREE.MeshPhongMaterial( { color: 0xffffff * Math.random() } )
+					)
 				} ) );
 
 				setupHomeScreen();
@@ -356,7 +360,37 @@
 
 			}
 
-			function createHitTestPlacementGame( { id, label, createPlacementGeometry } ) {
+			function createTree() {
+
+				const tree = new THREE.Group();
+
+				const trunk = new THREE.Mesh(
+					new THREE.CylinderGeometry( 0.03, 0.05, 0.14, 8 ),
+					new THREE.MeshPhongMaterial( { color: 0x5c4033 } )
+				);
+				trunk.position.y = 0.07;
+				tree.add( trunk );
+
+				const green = 0x2d6a4f + Math.floor( Math.random() * 0x151510 );
+				const foliage = new THREE.Mesh(
+					new THREE.ConeGeometry( 0.16, 0.28, 8 ),
+					new THREE.MeshPhongMaterial( { color: green } )
+				);
+				foliage.position.y = 0.28;
+				tree.add( foliage );
+
+				const foliageTop = new THREE.Mesh(
+					new THREE.ConeGeometry( 0.11, 0.18, 8 ),
+					new THREE.MeshPhongMaterial( { color: green + 0x080808 } )
+				);
+				foliageTop.position.y = 0.46;
+				tree.add( foliageTop );
+
+				return tree;
+
+			}
+
+			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false } ) {
 
 				function create( { scene, renderer, controller1, controller2 } ) {
 
@@ -364,17 +398,25 @@
 					let hitTestSource = null;
 					let hitTestSourceRequested = false;
 
-					const geometry = createPlacementGeometry();
-
 					function onSelect() {
 
 						if ( reticle.visible ) {
 
-							const material = new THREE.MeshPhongMaterial( { color: 0xffffff * Math.random() } );
-							const mesh = new THREE.Mesh( geometry, material );
-							reticle.matrix.decompose( mesh.position, mesh.quaternion, mesh.scale );
-							mesh.scale.y = Math.random() * 2 + 1;
-							scene.add( mesh );
+							const object = createPlacement();
+							reticle.matrix.decompose( object.position, object.quaternion, object.scale );
+
+							if ( uniformScale ) {
+
+								const scale = Math.random() * 1.2 + 0.8;
+								object.scale.set( scale, scale, scale );
+
+							} else {
+
+								object.scale.y = Math.random() * 2 + 1;
+
+							}
+
+							scene.add( object );
 
 						}
 
