@@ -222,12 +222,105 @@
 				background: #fff;
 				border-color: #fff;
 			}
+
+			#paint-controls {
+				display: none;
+				position: absolute;
+				left: 50%;
+				bottom: 94px;
+				transform: translateX(-50%);
+				align-items: center;
+				gap: 8px;
+				padding: 10px;
+				max-width: calc(100vw - 24px);
+				color: #fff;
+				background: rgba(0, 0, 0, 0.72);
+				border: 1px solid rgba(255, 255, 255, 0.28);
+				border-radius: 999px;
+				box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+				pointer-events: auto;
+				touch-action: manipulation;
+				-webkit-user-select: none;
+				user-select: none;
+			}
+
+			#paint-controls.visible {
+				display: flex;
+			}
+
+			#paint-controls .control-label {
+				padding: 0 4px 0 6px;
+				font-size: 12px;
+				font-weight: 700;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+				opacity: 0.76;
+				white-space: nowrap;
+			}
+
+			.paint-action-button {
+				padding: 10px 16px;
+				color: #fff;
+				background: rgba(255, 255, 255, 0.14);
+				border: 1px solid rgba(255, 255, 255, 0.28);
+				border-radius: 999px;
+				font-size: 14px;
+				font-weight: 700;
+				white-space: nowrap;
+			}
+
+			.paint-action-button:active {
+				background: rgba(255, 255, 255, 0.32);
+			}
+
+			#paint-hud {
+				display: none;
+				position: absolute;
+				left: 0;
+				right: 0;
+				top: 110px;
+				text-align: center;
+				color: #fff;
+				font-family: system-ui, sans-serif;
+				font-size: 13px;
+				font-weight: 600;
+				letter-spacing: 0.04em;
+				text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+				pointer-events: none;
+			}
+
+			#paint-hud.visible {
+				display: block;
+			}
+
+			#paint-tip-dot {
+				display: none;
+				position: absolute;
+				left: 50%;
+				top: 50%;
+				width: 12px;
+				height: 12px;
+				margin: -6px 0 0 -6px;
+				border-radius: 50%;
+				background: rgba(255, 255, 255, 0.95);
+				box-shadow: 0 0 8px rgba(0, 0, 0, 0.6);
+				pointer-events: none;
+			}
+
+			#paint-tip-dot.visible {
+				display: block;
+			}
+
+			#paint-tip-dot.drawing {
+				background: #ff5b8a;
+				box-shadow: 0 0 12px #ff5b8a;
+			}
 		</style>
 	</head>
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:01</div>
+		<div id="version">version: 13:05</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -250,6 +343,15 @@
 				<button class="spawn-type-button" type="button" data-spawn-type="cylinder">Cylinder</button>
 				<button class="spawn-type-button" type="button" data-spawn-type="cuboid">Cuboid</button>
 				<button class="spawn-type-button" type="button" data-spawn-type="fence">Fence</button>
+			</div>
+
+			<div id="paint-hud">Hold anywhere to paint. Move your phone to draw in 3D.</div>
+			<div id="paint-tip-dot" aria-hidden="true"></div>
+
+			<div id="paint-controls" aria-label="Paint controls">
+				<span class="control-label">Paint</span>
+				<button id="paint-new-color-button" class="paint-action-button" type="button">New color</button>
+				<button id="paint-clear-button" class="paint-action-button" type="button">Clear</button>
 			</div>
 		</div>
 
@@ -276,6 +378,7 @@
 			let activeMiniGame = null;
 			let selectedMiniGameId = 'world-builder';
 			let selectedWorldBuilderSpawnType = 'tree';
+			let paintCommands = null;
 
 			const miniGames = {};
 			const AR_START_LABEL = 'START AR MINI GAME';
@@ -340,8 +443,10 @@
 				} ) );
 
 				registerMiniGame( createShooterGame() );
+				registerMiniGame( createPaintGame() );
 
 				setupWorldBuilderControls();
+				setupPaintControls();
 				setupHomeScreen();
 				setupXRSessionHandlers();
 
@@ -393,6 +498,29 @@
 				} );
 
 				updateButtons();
+
+			}
+
+			function setupPaintControls() {
+
+				const clearButton = document.getElementById( 'paint-clear-button' );
+				const newColorButton = document.getElementById( 'paint-new-color-button' );
+
+				clearButton.addEventListener( 'click', ( event ) => {
+
+					event.preventDefault();
+					event.stopPropagation();
+					if ( paintCommands ) paintCommands.clear();
+
+				} );
+
+				newColorButton.addEventListener( 'click', ( event ) => {
+
+					event.preventDefault();
+					event.stopPropagation();
+					if ( paintCommands ) paintCommands.newColor();
+
+				} );
 
 			}
 
@@ -490,6 +618,9 @@
 				const miniGameSelect = document.getElementById( 'mini-game-select' );
 				const arOverlay = document.getElementById( 'ar-overlay' );
 				const worldBuilderControls = document.getElementById( 'world-builder-controls' );
+				const paintControls = document.getElementById( 'paint-controls' );
+				const paintHud = document.getElementById( 'paint-hud' );
+				const paintTipDot = document.getElementById( 'paint-tip-dot' );
 
 				renderer.xr.addEventListener( 'sessionstart', () => {
 
@@ -497,6 +628,10 @@
 					miniGameSelect.disabled = true;
 					arOverlay.classList.add( 'visible' );
 					worldBuilderControls.classList.toggle( 'visible', selectedMiniGameId === 'world-builder' );
+					const isPaint = selectedMiniGameId === 'paint';
+					paintControls.classList.toggle( 'visible', isPaint );
+					paintHud.classList.toggle( 'visible', isPaint );
+					paintTipDot.classList.toggle( 'visible', isPaint );
 
 					activeMiniGame = miniGames[ selectedMiniGameId ].create( {
 						scene,
@@ -522,6 +657,10 @@
 
 					arOverlay.classList.remove( 'visible' );
 					worldBuilderControls.classList.remove( 'visible' );
+					paintControls.classList.remove( 'visible' );
+					paintHud.classList.remove( 'visible' );
+					paintTipDot.classList.remove( 'visible' );
+					paintTipDot.classList.remove( 'drawing' );
 					homeScreen.classList.remove( 'hidden' );
 					miniGameSelect.disabled = false;
 
@@ -1289,6 +1428,275 @@
 								mesh.rotation.x += mesh.userData.spin.x * delta;
 								mesh.rotation.y += mesh.userData.spin.y * delta;
 								mesh.rotation.z += mesh.userData.spin.z * delta;
+
+							}
+
+						}
+
+					};
+
+				}
+
+				return { id, label, create };
+
+			}
+
+			function createPaintGame() {
+
+				const id = 'paint';
+				const label = 'Paint';
+
+				function create( { scene, renderer, camera } ) {
+
+					const paintTipDot = document.getElementById( 'paint-tip-dot' );
+
+					const strokesRoot = new THREE.Group();
+					scene.add( strokesRoot );
+
+					const sharedSegmentGeometry = new THREE.CylinderGeometry( 1, 1, 1, 8 );
+					sharedSegmentGeometry.translate( 0, 0.5, 0 );
+					const sharedJointGeometry = new THREE.SphereGeometry( 1, 8, 8 );
+
+					const camDir = new THREE.Vector3();
+					const tipPos = new THREE.Vector3();
+					const lastTip = new THREE.Vector3();
+					const segmentDir = new THREE.Vector3();
+					const segmentQuat = new THREE.Quaternion();
+					const upY = new THREE.Vector3( 0, 1, 0 );
+
+					const tipOffset = 0.32;
+					const tipRadius = 0.012;
+					const minSegmentLength = 0.012;
+
+					let xrSession = null;
+					let isPenDown = false;
+					let pendingPenDown = false;
+					let pendingPenUp = false;
+					let currentStroke = null;
+					let currentColorHex = 0xff5b8a;
+					let lastHadTip = false;
+
+					function pickNewColorHex() {
+
+						currentColorHex = new THREE.Color().setHSL(
+							Math.random(),
+							0.7 + Math.random() * 0.25,
+							0.5 + Math.random() * 0.1
+						).getHex();
+
+					}
+
+					function startStroke() {
+
+						const material = new THREE.MeshPhongMaterial( {
+							color: currentColorHex,
+							flatShading: true
+						} );
+
+						const strokeGroup = new THREE.Group();
+						strokeGroup.userData.material = material;
+						strokesRoot.add( strokeGroup );
+
+						currentStroke = strokeGroup;
+						lastHadTip = false;
+
+					}
+
+					function addJoint( position ) {
+
+						if ( ! currentStroke ) return;
+						const joint = new THREE.Mesh( sharedJointGeometry, currentStroke.userData.material );
+						joint.position.copy( position );
+						joint.scale.setScalar( tipRadius );
+						currentStroke.add( joint );
+
+					}
+
+					function addSegment( from, to ) {
+
+						if ( ! currentStroke ) return;
+
+						segmentDir.copy( to ).sub( from );
+						const length = segmentDir.length();
+						if ( length < 1e-5 ) return;
+						segmentDir.divideScalar( length );
+
+						segmentQuat.setFromUnitVectors( upY, segmentDir );
+						if ( Number.isNaN( segmentQuat.x ) ) segmentQuat.identity();
+
+						const mesh = new THREE.Mesh( sharedSegmentGeometry, currentStroke.userData.material );
+						mesh.position.copy( from );
+						mesh.quaternion.copy( segmentQuat );
+						mesh.scale.set( tipRadius, length, tipRadius );
+						currentStroke.add( mesh );
+
+					}
+
+					function clearStrokes() {
+
+						for ( let i = strokesRoot.children.length - 1; i >= 0; i -- ) {
+
+							const strokeGroup = strokesRoot.children[ i ];
+							strokesRoot.remove( strokeGroup );
+
+							if ( strokeGroup.userData.material ) {
+
+								strokeGroup.userData.material.dispose();
+
+							}
+
+						}
+
+						currentStroke = null;
+						lastHadTip = false;
+
+					}
+
+					function getViewCamera() {
+
+						if ( renderer.xr.isPresenting ) {
+
+							const xrCamera = renderer.xr.getCamera();
+
+							if ( xrCamera.cameras && xrCamera.cameras.length > 0 ) {
+
+								const eye = xrCamera.cameras[ 0 ];
+								eye.updateMatrixWorld( true );
+								return eye;
+
+							}
+
+							xrCamera.updateMatrixWorld( true );
+							return xrCamera;
+
+						}
+
+						camera.updateMatrixWorld( true );
+						return camera;
+
+					}
+
+					function onPointerDown( event ) {
+
+						event.preventDefault();
+						pendingPenDown = true;
+
+					}
+
+					function onPointerEnd() {
+
+						pendingPenUp = true;
+
+					}
+
+					function onXRSelectStart() {
+
+						pendingPenDown = true;
+
+					}
+
+					function onXRSelectEnd() {
+
+						pendingPenUp = true;
+
+					}
+
+					return {
+
+						onSessionStart() {
+
+							pickNewColorHex();
+							renderer.domElement.style.touchAction = 'none';
+							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
+							window.addEventListener( 'pointerup', onPointerEnd );
+							window.addEventListener( 'pointercancel', onPointerEnd );
+
+							xrSession = renderer.xr.getSession();
+							if ( xrSession ) {
+
+								xrSession.addEventListener( 'selectstart', onXRSelectStart );
+								xrSession.addEventListener( 'selectend', onXRSelectEnd );
+
+							}
+
+							paintCommands = {
+								clear: clearStrokes,
+								newColor: pickNewColorHex
+							};
+
+						},
+
+						onSessionEnd() {
+
+							renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
+							window.removeEventListener( 'pointerup', onPointerEnd );
+							window.removeEventListener( 'pointercancel', onPointerEnd );
+							renderer.domElement.style.touchAction = '';
+
+							if ( xrSession ) {
+
+								xrSession.removeEventListener( 'selectstart', onXRSelectStart );
+								xrSession.removeEventListener( 'selectend', onXRSelectEnd );
+								xrSession = null;
+
+							}
+
+							isPenDown = false;
+							pendingPenDown = false;
+							pendingPenUp = false;
+							paintCommands = null;
+
+							clearStrokes();
+							scene.remove( strokesRoot );
+							sharedSegmentGeometry.dispose();
+							sharedJointGeometry.dispose();
+							paintTipDot.classList.remove( 'drawing' );
+
+						},
+
+						onFrame( timestamp, frame ) {
+
+							if ( ! frame ) return;
+
+							if ( pendingPenDown ) {
+
+								pendingPenDown = false;
+								isPenDown = true;
+								startStroke();
+								paintTipDot.classList.add( 'drawing' );
+
+							}
+
+							if ( pendingPenUp ) {
+
+								pendingPenUp = false;
+								isPenDown = false;
+								currentStroke = null;
+								lastHadTip = false;
+								paintTipDot.classList.remove( 'drawing' );
+
+							}
+
+							if ( ! isPenDown ) return;
+
+							const viewCamera = getViewCamera();
+							viewCamera.getWorldDirection( camDir );
+							tipPos.copy( viewCamera.position ).addScaledVector( camDir, tipOffset );
+
+							if ( ! lastHadTip ) {
+
+								addJoint( tipPos );
+								lastTip.copy( tipPos );
+								lastHadTip = true;
+								return;
+
+							}
+
+							if ( tipPos.distanceTo( lastTip ) >= minSegmentLength ) {
+
+								addSegment( lastTip, tipPos );
+								addJoint( tipPos );
+								lastTip.copy( tipPos );
 
 							}
 
