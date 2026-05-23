@@ -161,7 +161,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 12:22</div>
+		<div id="version">version: 12:33</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -628,6 +628,8 @@
 					const shooterCrosshair = document.getElementById( 'shooter-crosshair' );
 					const gunSound = new Audio( 'sounds/gun.mp3' );
 					gunSound.preload = 'auto';
+					const explodeSound = new Audio( 'sounds/explode.mp3' );
+					explodeSound.preload = 'auto';
 
 					const bulletTrails = [];
 					const bulletEnd = new THREE.Vector3();
@@ -692,6 +694,14 @@
 						const shotSound = gunSound.cloneNode();
 						shotSound.volume = 0.85;
 						shotSound.play().catch( () => {} );
+
+					}
+
+					function playExplodeSound() {
+
+						const burst = explodeSound.cloneNode();
+						burst.volume = 0.9;
+						burst.play().catch( () => {} );
 
 					}
 
@@ -828,6 +838,7 @@
 
 						if ( hits.length > 0 ) {
 
+							playExplodeSound();
 							removeEnemy( hits[ 0 ].object );
 							return;
 
@@ -857,6 +868,7 @@
 
 						if ( closestEnemy ) {
 
+							playExplodeSound();
 							removeEnemy( closestEnemy );
 
 						}
@@ -1010,6 +1022,8 @@
 							bulletTrails.length = 0;
 							gunSound.pause();
 							gunSound.currentTime = 0;
+							explodeSound.pause();
+							explodeSound.currentTime = 0;
 							dashSegmentGeometry.dispose();
 							projectileGeometry.dispose();
 
