@@ -161,7 +161,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 12:09</div>
+		<div id="version">version: 12:17</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -626,7 +626,12 @@
 					const enemyWorldPos = new THREE.Vector3();
 					const shooterHud = document.getElementById( 'shooter-hud' );
 					const shooterCrosshair = document.getElementById( 'shooter-crosshair' );
+					const gunSound = new Audio( 'sounds/gun.mp3' );
+					gunSound.preload = 'auto';
 
+					const bulletTrails = [];
+					const bulletEnd = new THREE.Vector3();
+					const shotQuaternion = new THREE.Quaternion();
 					let xrSession = null;
 					let pendingPointerShot = null;
 					let pendingXRSelect = null;
@@ -635,6 +640,8 @@
 					const spawnIntervalMs = 1200;
 					const maxEnemies = 14;
 					const hitRadius = 0.28;
+					const bulletTrailLife = 0.18;
+					const maxBulletLength = 5;
 
 					function getViewCamera() {
 
@@ -669,6 +676,99 @@
 						scene.remove( mesh );
 						mesh.geometry.dispose();
 						mesh.material.dispose();
+
+					}
+
+					function playGunSound() {
+
+						const shotSound = gunSound.cloneNode();
+						shotSound.volume = 0.85;
+						shotSound.play().catch( () => {} );
+
+					}
+
+					function getBulletTrailLength( origin, direction ) {
+
+						raycaster.set( origin, direction );
+						const hits = raycaster.intersectObjects( enemies, false );
+
+						if ( hits.length > 0 ) {
+
+							return Math.max( 0.15, hits[ 0 ].distance );
+
+						}
+
+						return maxBulletLength;
+
+					}
+
+					function spawnBulletTrail( origin, direction ) {
+
+						const normalizedDirection = direction.clone().normalize();
+						const trailLength = getBulletTrailLength( origin, normalizedDirection );
+
+						bulletEnd.copy( origin ).addScaledVector( normalizedDirection, trailLength );
+
+						const geometry = new THREE.BufferGeometry().setFromPoints( [
+							origin.clone(),
+							bulletEnd.clone()
+						] );
+
+						const material = new THREE.LineDashedMaterial( {
+							color: 0xfff44d,
+							dashSize: 0.05,
+							gapSize: 0.03,
+							transparent: true,
+							opacity: 1
+						} );
+
+						const line = new THREE.Line( geometry, material );
+						line.computeLineDistances();
+						scene.add( line );
+
+						bulletTrails.push( {
+							line,
+							remaining: bulletTrailLife,
+							maxLife: bulletTrailLife
+						} );
+
+					}
+
+					function removeBulletTrail( trail ) {
+
+						scene.remove( trail.line );
+						trail.line.geometry.dispose();
+						trail.line.material.dispose();
+
+					}
+
+					function updateBulletTrails( delta ) {
+
+						for ( let i = bulletTrails.length - 1; i >= 0; i -- ) {
+
+							const trail = bulletTrails[ i ];
+							trail.remaining -= delta;
+							trail.line.material.opacity = Math.max( 0, trail.remaining / trail.maxLife );
+
+							if ( trail.remaining <= 0 ) {
+
+								removeBulletTrail( trail );
+								bulletTrails.splice( i, 1 );
+
+							}
+
+						}
+
+					}
+
+					function fireShot( origin, direction ) {
+
+						const normalizedDirection = direction.clone().normalize();
+
+						playGunSound();
+						spawnBulletTrail( origin, normalizedDirection );
+						raycaster.set( origin, normalizedDirection );
+						tryHitRay();
 
 					}
 
@@ -714,15 +814,6 @@
 
 					}
 
-					function shootFromRay( origin, direction ) {
-
-						rayOrigin.copy( origin );
-						rayDirection.copy( direction ).normalize();
-						raycaster.set( rayOrigin, rayDirection );
-						tryHitRay();
-
-					}
-
 					function shootAtScreen( clientX, clientY ) {
 
 						const viewCamera = getViewCamera();
@@ -731,7 +822,7 @@
 						pointer.y = - ( ( clientY - rect.top ) / rect.height ) * 2 + 1;
 
 						raycaster.setFromCamera( pointer, viewCamera );
-						tryHitRay();
+						fireShot( raycaster.ray.origin, raycaster.ray.direction );
 
 					}
 
@@ -748,16 +839,15 @@
 							pose.transform.position.z
 						);
 
-						rayDirection.set( 0, 0, - 1 ).applyQuaternion(
-							new THREE.Quaternion(
-								pose.transform.orientation.x,
-								pose.transform.orientation.y,
-								pose.transform.orientation.z,
-								pose.transform.orientation.w
-							)
+						shotQuaternion.set(
+							pose.transform.orientation.x,
+							pose.transform.orientation.y,
+							pose.transform.orientation.z,
+							pose.transform.orientation.w
 						);
 
-						shootFromRay( rayOrigin, rayDirection );
+						rayDirection.set( 0, 0, - 1 ).applyQuaternion( shotQuaternion );
+						fireShot( rayOrigin, rayDirection );
 
 					}
 
@@ -862,6 +952,16 @@
 
 							}
 
+							for ( const trail of [ ...bulletTrails ] ) {
+
+								removeBulletTrail( trail );
+
+							}
+
+							bulletTrails.length = 0;
+							gunSound.pause();
+							gunSound.currentTime = 0;
+
 						},
 
 						onFrame( timestamp, frame ) {
@@ -872,6 +972,7 @@
 
 							const delta = Math.min( ( timestamp - lastFrameTime ) / 1000, 0.05 );
 							lastFrameTime = timestamp;
+							updateBulletTrails( delta );
 							const viewCamera = getViewCamera();
 
 							if ( timestamp - lastSpawnTime >= spawnIntervalMs ) {
