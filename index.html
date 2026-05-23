@@ -161,7 +161,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 12:05</div>
+		<div id="version">version: 12:09</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -621,13 +621,44 @@
 					const camDir = new THREE.Vector3();
 					const right = new THREE.Vector3();
 					const up = new THREE.Vector3();
+					const rayOrigin = new THREE.Vector3();
+					const rayDirection = new THREE.Vector3();
+					const enemyWorldPos = new THREE.Vector3();
 					const shooterHud = document.getElementById( 'shooter-hud' );
 					const shooterCrosshair = document.getElementById( 'shooter-crosshair' );
 
+					let xrSession = null;
+					let pendingPointerShot = null;
+					let pendingXRSelect = null;
 					let lastSpawnTime = 0;
 					let lastFrameTime = 0;
 					const spawnIntervalMs = 1200;
 					const maxEnemies = 14;
+					const hitRadius = 0.28;
+
+					function getViewCamera() {
+
+						if ( renderer.xr.isPresenting ) {
+
+							const xrCamera = renderer.xr.getCamera();
+
+							if ( xrCamera.cameras && xrCamera.cameras.length > 0 ) {
+
+								const eye = xrCamera.cameras[ 0 ];
+								eye.updateMatrixWorld( true );
+								return eye;
+
+							}
+
+							xrCamera.updateMatrixWorld( true );
+							return xrCamera;
+
+						}
+
+						camera.updateMatrixWorld( true );
+						return camera;
+
+					}
 
 					function removeEnemy( mesh ) {
 
@@ -641,19 +672,109 @@
 
 					}
 
+					function tryHitRay() {
+
+						const viewCamera = getViewCamera();
+						const hits = raycaster.intersectObjects( enemies, false );
+
+						if ( hits.length > 0 ) {
+
+							removeEnemy( hits[ 0 ].object );
+							return;
+
+						}
+
+						let closestEnemy = null;
+						let closestDistance = hitRadius;
+
+						for ( const mesh of enemies ) {
+
+							mesh.getWorldPosition( enemyWorldPos );
+							const distanceToRay = raycaster.ray.distanceToPoint( enemyWorldPos );
+
+							if ( distanceToRay < closestDistance ) {
+
+								const toEnemy = enemyWorldPos.clone().sub( viewCamera.position );
+								if ( toEnemy.dot( raycaster.ray.direction ) > 0 ) {
+
+									closestDistance = distanceToRay;
+									closestEnemy = mesh;
+
+								}
+
+							}
+
+						}
+
+						if ( closestEnemy ) {
+
+							removeEnemy( closestEnemy );
+
+						}
+
+					}
+
+					function shootFromRay( origin, direction ) {
+
+						rayOrigin.copy( origin );
+						rayDirection.copy( direction ).normalize();
+						raycaster.set( rayOrigin, rayDirection );
+						tryHitRay();
+
+					}
+
+					function shootAtScreen( clientX, clientY ) {
+
+						const viewCamera = getViewCamera();
+						const rect = renderer.domElement.getBoundingClientRect();
+						pointer.x = ( ( clientX - rect.left ) / rect.width ) * 2 - 1;
+						pointer.y = - ( ( clientY - rect.top ) / rect.height ) * 2 + 1;
+
+						raycaster.setFromCamera( pointer, viewCamera );
+						tryHitRay();
+
+					}
+
+					function shootFromXRSelect( event, frame ) {
+
+						const referenceSpace = renderer.xr.getReferenceSpace();
+						const pose = frame.getPose( event.inputSource.targetRaySpace, referenceSpace );
+
+						if ( ! pose ) return;
+
+						rayOrigin.set(
+							pose.transform.position.x,
+							pose.transform.position.y,
+							pose.transform.position.z
+						);
+
+						rayDirection.set( 0, 0, - 1 ).applyQuaternion(
+							new THREE.Quaternion(
+								pose.transform.orientation.x,
+								pose.transform.orientation.y,
+								pose.transform.orientation.z,
+								pose.transform.orientation.w
+							)
+						);
+
+						shootFromRay( rayOrigin, rayDirection );
+
+					}
+
 					function spawnEnemy() {
 
 						if ( enemies.length >= maxEnemies ) return;
 
+						const viewCamera = getViewCamera();
 						const mesh = createRandomEnemyMesh();
-						camera.getWorldDirection( camDir );
-						right.crossVectors( camDir, camera.up ).normalize();
+						viewCamera.getWorldDirection( camDir );
+						right.crossVectors( camDir, viewCamera.up ).normalize();
 						up.crossVectors( right, camDir ).normalize();
 
 						const distance = 2.5 + Math.random() * 1.5;
 						const spread = 1.4;
 
-						mesh.position.copy( camera.position )
+						mesh.position.copy( viewCamera.position )
 							.addScaledVector( camDir, distance )
 							.addScaledVector( right, ( Math.random() - 0.5 ) * spread )
 							.addScaledVector( up, ( Math.random() - 0.5 ) * spread * 0.85 );
@@ -664,27 +785,35 @@
 
 					}
 
-					function shootAtScreen( clientX, clientY ) {
+					function onPointerDown( event ) {
 
-						const rect = renderer.domElement.getBoundingClientRect();
-						pointer.x = ( ( clientX - rect.left ) / rect.width ) * 2 - 1;
-						pointer.y = - ( ( clientY - rect.top ) / rect.height ) * 2 + 1;
-
-						raycaster.setFromCamera( pointer, camera );
-
-						const hits = raycaster.intersectObjects( enemies, false );
-						if ( hits.length > 0 ) {
-
-							removeEnemy( hits[ 0 ].object );
-
-						}
+						event.preventDefault();
+						const point = event.changedTouches ? event.changedTouches[ 0 ] : event;
+						pendingPointerShot = { x: point.clientX, y: point.clientY };
 
 					}
 
-					function onPointerDown( event ) {
+					function onXRSelect( event ) {
 
-						const point = event.touches ? event.touches[ 0 ] : event;
-						shootAtScreen( point.clientX, point.clientY );
+						pendingXRSelect = event;
+
+					}
+
+					function processPendingShots( frame ) {
+
+						if ( pendingXRSelect ) {
+
+							shootFromXRSelect( pendingXRSelect, frame );
+							pendingXRSelect = null;
+
+						}
+
+						if ( pendingPointerShot ) {
+
+							shootAtScreen( pendingPointerShot.x, pendingPointerShot.y );
+							pendingPointerShot = null;
+
+						}
 
 					}
 
@@ -696,7 +825,16 @@
 							lastFrameTime = lastSpawnTime;
 							shooterHud.classList.add( 'visible' );
 							shooterCrosshair.classList.add( 'visible' );
+							renderer.domElement.style.touchAction = 'none';
 							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
+
+							xrSession = renderer.xr.getSession();
+							if ( xrSession ) {
+
+								xrSession.addEventListener( 'select', onXRSelect );
+
+							}
+
 							spawnEnemy();
 
 						},
@@ -704,6 +842,17 @@
 						onSessionEnd() {
 
 							renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
+							renderer.domElement.style.touchAction = '';
+
+							if ( xrSession ) {
+
+								xrSession.removeEventListener( 'select', onXRSelect );
+								xrSession = null;
+
+							}
+
+							pendingPointerShot = null;
+							pendingXRSelect = null;
 							shooterHud.classList.remove( 'visible' );
 							shooterCrosshair.classList.remove( 'visible' );
 
@@ -719,8 +868,11 @@
 
 							if ( ! frame ) return;
 
+							processPendingShots( frame );
+
 							const delta = Math.min( ( timestamp - lastFrameTime ) / 1000, 0.05 );
 							lastFrameTime = timestamp;
+							const viewCamera = getViewCamera();
 
 							if ( timestamp - lastSpawnTime >= spawnIntervalMs ) {
 
@@ -732,7 +884,7 @@
 							for ( let i = enemies.length - 1; i >= 0; i -- ) {
 
 								const mesh = enemies[ i ];
-								const toCamera = camera.position.clone().sub( mesh.position );
+								const toCamera = viewCamera.position.clone().sub( mesh.position );
 								const distance = toCamera.length();
 
 								if ( distance < 0.25 ) {
