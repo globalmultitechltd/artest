@@ -156,12 +156,78 @@
 			#shooter-crosshair.visible {
 				display: block;
 			}
+
+			#ar-overlay {
+				display: none;
+				position: fixed;
+				inset: 0;
+				z-index: 10002;
+				pointer-events: none;
+				font-family: system-ui, sans-serif;
+			}
+
+			#ar-overlay.visible {
+				display: block;
+			}
+
+			#world-builder-controls {
+				display: none;
+				position: absolute;
+				left: 50%;
+				bottom: 94px;
+				transform: translateX(-50%);
+				align-items: center;
+				gap: 8px;
+				padding: 10px;
+				max-width: calc(100vw - 24px);
+				overflow-x: auto;
+				color: #fff;
+				background: rgba(0, 0, 0, 0.72);
+				border: 1px solid rgba(255, 255, 255, 0.28);
+				border-radius: 999px;
+				box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+				pointer-events: auto;
+				touch-action: manipulation;
+				-webkit-user-select: none;
+				user-select: none;
+			}
+
+			#world-builder-controls.visible {
+				display: flex;
+			}
+
+			#world-builder-controls .control-label {
+				padding: 0 4px 0 6px;
+				font-size: 12px;
+				font-weight: 700;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+				opacity: 0.76;
+				white-space: nowrap;
+			}
+
+			.spawn-type-button {
+				padding: 10px 13px;
+				color: #fff;
+				background: rgba(255, 255, 255, 0.14);
+				border: 1px solid rgba(255, 255, 255, 0.28);
+				border-radius: 999px;
+				font-size: 14px;
+				font-weight: 700;
+				white-space: nowrap;
+			}
+
+			.spawn-type-button.active {
+				color: #020617;
+				background: #fff;
+				border-color: #fff;
+			}
 		</style>
 	</head>
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 12:38</div>
+		<div id="version">version: 12:55</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -176,6 +242,15 @@
 
 		<div id="shooter-hud">Tap anywhere to shoot</div>
 		<div id="shooter-crosshair" aria-hidden="true"></div>
+
+		<div id="ar-overlay">
+			<div id="world-builder-controls" aria-label="World Builder spawn controls">
+				<span class="control-label">Spawn</span>
+				<button class="spawn-type-button active" type="button" data-spawn-type="tree">Tree</button>
+				<button class="spawn-type-button" type="button" data-spawn-type="cylinder">Cylinder</button>
+				<button class="spawn-type-button" type="button" data-spawn-type="cuboid">Cuboid</button>
+			</div>
+		</div>
 
 		<script type="importmap">
 			{
@@ -199,6 +274,7 @@
 
 			let activeMiniGame = null;
 			let selectedMiniGameId = 'world-builder';
+			let selectedWorldBuilderSpawnType = 'tree';
 
 			const miniGames = {};
 			const AR_START_LABEL = 'START AR MINI GAME';
@@ -230,7 +306,13 @@
 
 				//
 
-				document.body.appendChild( ARButton.createButton( renderer, { requiredFeatures: [ 'hit-test' ] } ) );
+				const arOverlay = document.getElementById( 'ar-overlay' );
+
+				document.body.appendChild( ARButton.createButton( renderer, {
+					requiredFeatures: [ 'hit-test' ],
+					optionalFeatures: [ 'dom-overlay' ],
+					domOverlay: { root: arOverlay }
+				} ) );
 
 				controller1 = renderer.xr.getController( 0 );
 				scene.add( controller1 );
@@ -243,7 +325,7 @@
 				registerMiniGame( createHitTestPlacementGame( {
 					id: 'world-builder',
 					label: 'World Builder',
-					createPlacement: createTree,
+					createPlacement: createWorldBuilderPlacement,
 					uniformScale: true
 				} ) );
 
@@ -258,6 +340,7 @@
 
 				registerMiniGame( createShooterGame() );
 
+				setupWorldBuilderControls();
 				setupHomeScreen();
 				setupXRSessionHandlers();
 
@@ -268,6 +351,47 @@
 			function registerMiniGame( game ) {
 
 				miniGames[ game.id ] = game;
+
+			}
+
+			function setupWorldBuilderControls() {
+
+				const arOverlay = document.getElementById( 'ar-overlay' );
+				const buttons = document.querySelectorAll( '.spawn-type-button' );
+
+				function updateButtons() {
+
+					for ( const button of buttons ) {
+
+						button.classList.toggle( 'active', button.dataset.spawnType === selectedWorldBuilderSpawnType );
+
+					}
+
+				}
+
+				for ( const button of buttons ) {
+
+					button.addEventListener( 'click', ( event ) => {
+
+						event.preventDefault();
+						event.stopPropagation();
+
+						selectedWorldBuilderSpawnType = button.dataset.spawnType;
+						updateButtons();
+
+					} );
+
+				}
+
+				// When tapping overlay controls, do not also fire the WebXR "select" event
+				// that places an object into the world.
+				arOverlay.addEventListener( 'beforexrselect', ( event ) => {
+
+					event.preventDefault();
+
+				} );
+
+				updateButtons();
 
 			}
 
@@ -363,11 +487,15 @@
 
 				const homeScreen = document.getElementById( 'home-screen' );
 				const miniGameSelect = document.getElementById( 'mini-game-select' );
+				const arOverlay = document.getElementById( 'ar-overlay' );
+				const worldBuilderControls = document.getElementById( 'world-builder-controls' );
 
 				renderer.xr.addEventListener( 'sessionstart', () => {
 
 					homeScreen.classList.add( 'hidden' );
 					miniGameSelect.disabled = true;
+					arOverlay.classList.add( 'visible' );
+					worldBuilderControls.classList.toggle( 'visible', selectedMiniGameId === 'world-builder' );
 
 					activeMiniGame = miniGames[ selectedMiniGameId ].create( {
 						scene,
@@ -391,6 +519,8 @@
 
 					resetSceneForHomeScreen();
 
+					arOverlay.classList.remove( 'visible' );
+					worldBuilderControls.classList.remove( 'visible' );
 					homeScreen.classList.remove( 'hidden' );
 					miniGameSelect.disabled = false;
 
@@ -437,6 +567,40 @@
 
 			}
 
+			function createCylinder() {
+
+				const material = new THREE.MeshPhongMaterial( { color: 0xffffff * Math.random() } );
+				const geometry = new THREE.CylinderGeometry( 0.08, 0.08, 0.22, 24 ).translate( 0, 0.11, 0 );
+
+				return new THREE.Mesh( geometry, material );
+
+			}
+
+			function createCuboid() {
+
+				const material = new THREE.MeshPhongMaterial( { color: 0xffffff * Math.random() } );
+				const geometry = new THREE.BoxGeometry( 0.2, 0.18, 0.2 ).translate( 0, 0.09, 0 );
+
+				return new THREE.Mesh( geometry, material );
+
+			}
+
+			function createWorldBuilderPlacement() {
+
+				switch ( selectedWorldBuilderSpawnType ) {
+
+					case 'cylinder':
+						return createCylinder();
+					case 'cuboid':
+						return createCuboid();
+					case 'tree':
+					default:
+						return createTree();
+
+				}
+
+			}
+
 			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false } ) {
 
 				function create( { scene, renderer, controller1, controller2 } ) {
@@ -450,16 +614,20 @@
 						if ( reticle.visible ) {
 
 							const object = createPlacement();
+							const baseScale = object.scale.clone();
 							reticle.matrix.decompose( object.position, object.quaternion, object.scale );
+							object.scale.multiply( baseScale );
 
-							if ( uniformScale ) {
+							const useUniformScale = typeof uniformScale === 'function' ? uniformScale() : uniformScale;
+
+							if ( useUniformScale ) {
 
 								const scale = Math.random() * 1.2 + 0.8;
-								object.scale.set( scale, scale, scale );
+								object.scale.multiplyScalar( scale );
 
 							} else {
 
-								object.scale.y = Math.random() * 2 + 1;
+								object.scale.y *= Math.random() * 2 + 1;
 
 							}
 
