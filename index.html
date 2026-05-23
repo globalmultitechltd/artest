@@ -118,11 +118,33 @@
 				cursor: pointer;
 			}
 
-			#world-builder-ui {
+			#ar-dom-overlay {
+				display: none;
 				position: fixed;
-				top: 60px;
-				right: 12px;
+				inset: 0;
 				z-index: 10001;
+				pointer-events: none;
+			}
+
+			#ar-overlay-exit {
+				position: absolute;
+				top: 20px;
+				right: 20px;
+				width: 38px;
+				height: 38px;
+				pointer-events: auto;
+				cursor: pointer;
+			}
+
+			#ar-overlay-exit path {
+				stroke: #fff;
+				stroke-width: 2;
+			}
+
+			#world-builder-ui {
+				position: absolute;
+				top: 68px;
+				right: 12px;
 				min-width: 160px;
 				padding: 12px 14px;
 				background: rgba(0, 0, 0, 0.85);
@@ -164,11 +186,16 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 11:51</div>
+		<div id="version">version: 11:55</div>
 
-		<div id="world-builder-ui" class="hidden">
-			<label for="world-builder-object-select">Objects</label>
-			<select id="world-builder-object-select" aria-label="Choose object to place"></select>
+		<div id="ar-dom-overlay">
+			<svg id="ar-overlay-exit" width="38" height="38" viewBox="0 0 40 40" aria-label="Exit AR" role="button">
+				<path d="M 12,12 L 28,28 M 28,12 12,28"></path>
+			</svg>
+			<div id="world-builder-ui" class="hidden">
+				<label for="world-builder-object-select">Objects</label>
+				<select id="world-builder-object-select" aria-label="Choose object to place"></select>
+			</div>
 		</div>
 
 		<div id="home-screen">
@@ -235,7 +262,13 @@
 
 				//
 
-				document.body.appendChild( ARButton.createButton( renderer, { requiredFeatures: [ 'hit-test' ] } ) );
+				setupArDomOverlay();
+
+				document.body.appendChild( ARButton.createButton( renderer, {
+					requiredFeatures: [ 'hit-test' ],
+					optionalFeatures: [ 'dom-overlay' ],
+					domOverlay: { root: document.getElementById( 'ar-dom-overlay' ) }
+				} ) );
 
 				controller1 = renderer.xr.getController( 0 );
 				scene.add( controller1 );
@@ -272,6 +305,17 @@
 				setupXRSessionHandlers();
 
 				window.addEventListener( 'resize', onWindowResize );
+
+			}
+
+			function setupArDomOverlay() {
+
+				document.getElementById( 'ar-overlay-exit' ).addEventListener( 'click', () => {
+
+					const session = renderer.xr.getSession();
+					if ( session ) session.end();
+
+				} );
 
 			}
 
