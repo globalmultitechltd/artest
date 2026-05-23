@@ -320,7 +320,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:12</div>
+		<div id="version">version: 13:22</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -341,7 +341,7 @@
 				<span class="control-label">Spawn</span>
 				<button class="spawn-type-button active" type="button" data-spawn-type="tree">Tree</button>
 				<button class="spawn-type-button" type="button" data-spawn-type="cylinder">Cylinder</button>
-				<button class="spawn-type-button" type="button" data-spawn-type="cuboid">Cuboid</button>
+				<button class="spawn-type-button" type="button" data-spawn-type="block">Block</button>
 				<button class="spawn-type-button" type="button" data-spawn-type="fence">Fence</button>
 			</div>
 
@@ -382,6 +382,7 @@
 
 			const miniGames = {};
 			const AR_START_LABEL = 'START AR MINI GAME';
+			const BLOCK_SIZE = 0.2;
 
 			init();
 
@@ -431,7 +432,8 @@
 					label: 'World Builder',
 					createPlacement: createWorldBuilderPlacement,
 					uniformScale: () => selectedWorldBuilderSpawnType === 'tree',
-					fixedScale: () => selectedWorldBuilderSpawnType === 'fence'
+					fixedScale: () => selectedWorldBuilderSpawnType === 'fence' || selectedWorldBuilderSpawnType === 'block',
+					isBlockMode: () => selectedWorldBuilderSpawnType === 'block'
 				} ) );
 
 				registerMiniGame( createHitTestPlacementGame( {
@@ -717,12 +719,14 @@
 
 			}
 
-			function createCuboid() {
+			function createBlock() {
 
 				const material = new THREE.MeshPhongMaterial( { color: 0xffffff * Math.random() } );
-				const geometry = new THREE.BoxGeometry( 0.2, 0.18, 0.2 ).translate( 0, 0.09, 0 );
+				const geometry = new THREE.BoxGeometry( BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE ).translate( 0, BLOCK_SIZE / 2, 0 );
 
-				return new THREE.Mesh( geometry, material );
+				const mesh = new THREE.Mesh( geometry, material );
+				mesh.userData.isBlock = true;
+				return mesh;
 
 			}
 
@@ -784,8 +788,8 @@
 
 					case 'cylinder':
 						return createCylinder();
-					case 'cuboid':
-						return createCuboid();
+					case 'block':
+						return createBlock();
 					case 'fence':
 						return createFence();
 					case 'tree':
@@ -796,9 +800,9 @@
 
 			}
 
-			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false, fixedScale = false } ) {
+			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false, fixedScale = false, isBlockMode = null } ) {
 
-				function create( { scene, renderer, controller1, controller2 } ) {
+				function create( { scene, renderer, camera, controller1, controller2 } ) {
 
 					let reticle;
 					let hitTestSource = null;
@@ -807,7 +811,129 @@
 					const placementQuaternion = new THREE.Quaternion();
 					const placementScale = new THREE.Vector3();
 
+					const placedBlocks = [];
+					const blockRaycaster = new THREE.Raycaster();
+					const blockRayDir = new THREE.Vector3();
+					const blockLocalUp = new THREE.Vector3();
+					const HOVER_EMISSIVE_HEX = 0xffaa00;
+					let hoveredBlock = null;
+
+					function inBlockMode() {
+
+						return typeof isBlockMode === 'function' ? !! isBlockMode() : !! isBlockMode;
+
+					}
+
+					function getViewCamera() {
+
+						if ( renderer.xr.isPresenting ) {
+
+							const xrCamera = renderer.xr.getCamera();
+
+							if ( xrCamera.cameras && xrCamera.cameras.length > 0 ) {
+
+								const eye = xrCamera.cameras[ 0 ];
+								eye.updateMatrixWorld( true );
+								return eye;
+
+							}
+
+							xrCamera.updateMatrixWorld( true );
+							return xrCamera;
+
+						}
+
+						camera.updateMatrixWorld( true );
+						return camera;
+
+					}
+
+					function clearHoveredBlock() {
+
+						if ( hoveredBlock && hoveredBlock.material && hoveredBlock.material.emissive ) {
+
+							const hex = hoveredBlock.userData._origEmissiveHex || 0;
+							hoveredBlock.material.emissive.setHex( hex );
+
+						}
+
+						hoveredBlock = null;
+
+					}
+
+					function setHoveredBlock( block ) {
+
+						if ( hoveredBlock === block ) return;
+						clearHoveredBlock();
+
+						if ( block && block.material && block.material.emissive ) {
+
+							if ( block.userData._origEmissiveHex === undefined ) {
+
+								block.userData._origEmissiveHex = block.material.emissive.getHex();
+
+							}
+
+							block.material.emissive.setHex( HOVER_EMISSIVE_HEX );
+							hoveredBlock = block;
+
+						}
+
+					}
+
+					function updateHoveredBlock() {
+
+						if ( placedBlocks.length === 0 ) {
+
+							clearHoveredBlock();
+							return;
+
+						}
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldDirection( blockRayDir );
+						blockRaycaster.set( viewCamera.position, blockRayDir );
+
+						const hits = blockRaycaster.intersectObjects( placedBlocks, false );
+						if ( hits.length > 0 ) {
+
+							setHoveredBlock( hits[ 0 ].object );
+
+						} else {
+
+							clearHoveredBlock();
+
+						}
+
+					}
+
+					function placeOnTopOf( target ) {
+
+						const object = createPlacement();
+						if ( ! object ) return;
+
+						blockLocalUp.set( 0, 1, 0 ).applyQuaternion( target.quaternion );
+						object.position.copy( target.position ).addScaledVector( blockLocalUp, BLOCK_SIZE * target.scale.y );
+						object.quaternion.copy( target.quaternion );
+						object.scale.copy( target.scale );
+						scene.add( object );
+
+						if ( object.userData && object.userData.isBlock ) {
+
+							placedBlocks.push( object );
+
+						}
+
+					}
+
 					function onSelect() {
+
+						if ( inBlockMode() && hoveredBlock ) {
+
+							placeOnTopOf( hoveredBlock );
+							return;
+
+						}
 
 						if ( reticle.visible ) {
 
@@ -844,6 +970,12 @@
 							}
 
 							scene.add( object );
+
+							if ( object.userData && object.userData.isBlock ) {
+
+								placedBlocks.push( object );
+
+							}
 
 						}
 
@@ -882,6 +1014,9 @@
 							}
 
 							hitTestSourceRequested = false;
+
+							clearHoveredBlock();
+							placedBlocks.length = 0;
 
 						},
 
@@ -931,6 +1066,16 @@
 									reticle.visible = false;
 
 								}
+
+							}
+
+							if ( inBlockMode() ) {
+
+								updateHoveredBlock();
+
+							} else {
+
+								clearHoveredBlock();
 
 							}
 
