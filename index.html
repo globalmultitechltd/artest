@@ -65,12 +65,67 @@
 				background: #1d4ed8 !important;
 				transform: translateX(-50%) scale(0.98);
 			}
+
+			#home-screen {
+				position: fixed;
+				inset: 0;
+				z-index: 9999;
+				display: flex;
+				flex-direction: column;
+				pointer-events: none;
+			}
+
+			#home-screen.hidden {
+				display: none;
+			}
+
+			#mini-game-picker {
+				pointer-events: auto;
+				margin: 60px 16px 0;
+				padding: 14px 16px;
+				background: rgba(0, 0, 0, 0.85);
+				border: 1px solid rgba(255, 255, 255, 0.25);
+				border-radius: 12px;
+				color: #fff;
+				font-family: system-ui, sans-serif;
+			}
+
+			#mini-game-picker label {
+				display: block;
+				margin-bottom: 8px;
+				font-size: 12px;
+				font-weight: 600;
+				letter-spacing: 0.04em;
+				text-transform: uppercase;
+				opacity: 0.75;
+			}
+
+			#mini-game-select {
+				width: 100%;
+				padding: 12px 14px;
+				font-size: 16px;
+				font-weight: 600;
+				color: #fff;
+				background: #1e293b;
+				border: 1px solid rgba(255, 255, 255, 0.2);
+				border-radius: 8px;
+				appearance: none;
+				cursor: pointer;
+			}
 		</style>
 	</head>
 	<body>
 
 		<!-- Update version time (HH:mm) whenever this file is edited -->
-		<div id="version">version: 22:52</div>
+		<div id="version">version: 12:05</div>
+
+		<div id="home-screen">
+			<div id="mini-game-picker">
+				<label for="mini-game-select">AR mini game</label>
+				<select id="mini-game-select" aria-label="Choose AR mini game"></select>
+			</div>
+		</div>
+
 		<div id="info">
 			<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> ar - hit test<br/>
 		</div>
@@ -93,10 +148,10 @@
 			let camera, scene, renderer;
 			let controller1, controller2;
 
-			let reticle;
+			let activeMiniGame = null;
+			let selectedMiniGameId = 'cylinders';
 
-			let hitTestSource = null;
-			let hitTestSourceRequested = false;
+			const miniGames = {};
 
 			init();
 
@@ -126,43 +181,211 @@
 
 				document.body.appendChild( ARButton.createButton( renderer, { requiredFeatures: [ 'hit-test' ] } ) );
 
-				//
-
-				const geometry = new THREE.CylinderGeometry( 0.1, 0.1, 0.2, 32 ).translate( 0, 0.1, 0 );
-
-				function onSelect() {
-
-					if ( reticle.visible ) {
-
-						const material = new THREE.MeshPhongMaterial( { color: 0xffffff * Math.random() } );
-						const mesh = new THREE.Mesh( geometry, material );
-						reticle.matrix.decompose( mesh.position, mesh.quaternion, mesh.scale );
-						mesh.scale.y = Math.random() * 2 + 1;
-						scene.add( mesh );
-
-					}
-
-				}
-
 				controller1 = renderer.xr.getController( 0 );
-				controller1.addEventListener( 'select', onSelect );
 				scene.add( controller1 );
 
 				controller2 = renderer.xr.getController( 1 );
-				controller2.addEventListener( 'select', onSelect );
 				scene.add( controller2 );
 
-				reticle = new THREE.Mesh(
-					new THREE.RingGeometry( 0.15, 0.2, 32 ).rotateX( - Math.PI / 2 ),
-					new THREE.MeshBasicMaterial()
-				);
-				reticle.matrixAutoUpdate = false;
-				reticle.visible = false;
-				scene.add( reticle );
+				registerMiniGame( createHitTestPlacementGame( {
+					id: 'cylinders',
+					label: 'Cylinders',
+					createPlacementGeometry: () => new THREE.CylinderGeometry( 0.1, 0.1, 0.2, 32 ).translate( 0, 0.1, 0 )
+				} ) );
 
-				//
+				registerMiniGame( createHitTestPlacementGame( {
+					id: 'cuboids',
+					label: 'Cuboids',
+					createPlacementGeometry: () => new THREE.BoxGeometry( 0.2, 0.2, 0.2 ).translate( 0, 0.1, 0 )
+				} ) );
+
+				setupHomeScreen();
+				setupXRSessionHandlers();
 
 				window.addEventListener( 'resize', onWindowResize );
+
+			}
+
+			function registerMiniGame( game ) {
+
+				miniGames[ game.id ] = game;
+
+			}
+
+			function setupHomeScreen() {
+
+				const select = document.getElementById( 'mini-game-select' );
+
+				for ( const id of Object.keys( miniGames ) ) {
+
+					const option = document.createElement( 'option' );
+					option.value = id;
+					option.textContent = miniGames[ id ].label;
+					select.appendChild( option );
+
+				}
+
+				select.value = selectedMiniGameId;
+
+				select.addEventListener( 'change', () => {
+
+					selectedMiniGameId = select.value;
+
+				} );
+
+				const arButton = document.getElementById( 'ARButton' );
+				if ( arButton ) {
+
+					arButton.style.pointerEvents = 'auto';
+
+				}
+
+			}
+
+			function setupXRSessionHandlers() {
+
+				const homeScreen = document.getElementById( 'home-screen' );
+				const miniGameSelect = document.getElementById( 'mini-game-select' );
+
+				renderer.xr.addEventListener( 'sessionstart', () => {
+
+					homeScreen.classList.add( 'hidden' );
+					miniGameSelect.disabled = true;
+
+					activeMiniGame = miniGames[ selectedMiniGameId ].create( {
+						scene,
+						renderer,
+						controller1,
+						controller2
+					} );
+					activeMiniGame.onSessionStart();
+
+				} );
+
+				renderer.xr.addEventListener( 'sessionend', () => {
+
+					if ( activeMiniGame ) {
+
+						activeMiniGame.onSessionEnd();
+						activeMiniGame = null;
+
+					}
+
+					homeScreen.classList.remove( 'hidden' );
+					miniGameSelect.disabled = false;
+
+				} );
+
+			}
+
+			function createHitTestPlacementGame( { id, label, createPlacementGeometry } ) {
+
+				function create( { scene, renderer, controller1, controller2 } ) {
+
+					let reticle;
+					let hitTestSource = null;
+					let hitTestSourceRequested = false;
+
+					const geometry = createPlacementGeometry();
+
+					function onSelect() {
+
+						if ( reticle.visible ) {
+
+							const material = new THREE.MeshPhongMaterial( { color: 0xffffff * Math.random() } );
+							const mesh = new THREE.Mesh( geometry, material );
+							reticle.matrix.decompose( mesh.position, mesh.quaternion, mesh.scale );
+							mesh.scale.y = Math.random() * 2 + 1;
+							scene.add( mesh );
+
+						}
+
+					}
+
+					controller1.addEventListener( 'select', onSelect );
+					controller2.addEventListener( 'select', onSelect );
+
+					reticle = new THREE.Mesh(
+						new THREE.RingGeometry( 0.15, 0.2, 32 ).rotateX( - Math.PI / 2 ),
+						new THREE.MeshBasicMaterial()
+					);
+					reticle.matrixAutoUpdate = false;
+					reticle.visible = false;
+					scene.add( reticle );
+
+					return {
+
+						onSessionStart() {
+
+							hitTestSourceRequested = false;
+							hitTestSource = null;
+
+						},
+
+						onSessionEnd() {
+
+							controller1.removeEventListener( 'select', onSelect );
+							controller2.removeEventListener( 'select', onSelect );
+							scene.remove( reticle );
+
+						},
+
+						onFrame( timestamp, frame ) {
+
+							if ( ! frame ) return;
+
+							const referenceSpace = renderer.xr.getReferenceSpace();
+							const session = renderer.xr.getSession();
+
+							if ( hitTestSourceRequested === false ) {
+
+								session.requestReferenceSpace( 'viewer' ).then( function ( referenceSpace ) {
+
+									session.requestHitTestSource( { space: referenceSpace } ).then( function ( source ) {
+
+										hitTestSource = source;
+
+									} );
+
+								} );
+
+								session.addEventListener( 'end', function () {
+
+									hitTestSourceRequested = false;
+									hitTestSource = null;
+
+								} );
+
+								hitTestSourceRequested = true;
+
+							}
+
+							if ( hitTestSource ) {
+
+								const hitTestResults = frame.getHitTestResults( hitTestSource );
+
+								if ( hitTestResults.length ) {
+
+									const hit = hitTestResults[ 0 ];
+
+									reticle.visible = true;
+									reticle.matrix.fromArray( hit.getPose( referenceSpace ).transform.matrix );
+
+								} else {
+
+									reticle.visible = false;
+
+								}
+
+							}
+
+						}
+
+					};
+
+				}
+
+				return { id, label, create };
 
 			}
 
@@ -179,52 +402,9 @@
 
 			function animate( timestamp, frame ) {
 
-				if ( frame ) {
+				if ( activeMiniGame ) {
 
-					const referenceSpace = renderer.xr.getReferenceSpace();
-					const session = renderer.xr.getSession();
-
-					if ( hitTestSourceRequested === false ) {
-
-						session.requestReferenceSpace( 'viewer' ).then( function ( referenceSpace ) {
-
-							session.requestHitTestSource( { space: referenceSpace } ).then( function ( source ) {
-
-								hitTestSource = source;
-
-							} );
-
-						} );
-
-						session.addEventListener( 'end', function () {
-
-							hitTestSourceRequested = false;
-							hitTestSource = null;
-
-						} );
-
-						hitTestSourceRequested = true;
-
-					}
-
-					if ( hitTestSource ) {
-
-						const hitTestResults = frame.getHitTestResults( hitTestSource );
-
-						if ( hitTestResults.length ) {
-
-							const hit = hitTestResults[ 0 ];
-
-							reticle.visible = true;
-							reticle.matrix.fromArray( hit.getPose( referenceSpace ).transform.matrix );
-
-						} else {
-
-							reticle.visible = false;
-
-						}
-
-					}
+					activeMiniGame.onFrame( timestamp, frame );
 
 				}
 
