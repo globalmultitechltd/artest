@@ -117,18 +117,61 @@
 				appearance: none;
 				cursor: pointer;
 			}
+
+			#ar-placement-toolbar {
+				position: fixed;
+				top: 60px;
+				right: 12px;
+				z-index: 10001;
+				display: flex;
+				flex-direction: column;
+				gap: 10px;
+				pointer-events: auto;
+			}
+
+			#ar-placement-toolbar.hidden {
+				display: none;
+			}
+
+			.ar-mode-btn {
+				width: 56px;
+				height: 56px;
+				padding: 8px;
+				border: 2px solid rgba(255, 255, 255, 0.35);
+				border-radius: 12px;
+				background: rgba(0, 0, 0, 0.75);
+				cursor: pointer;
+				box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+			}
+
+			.ar-mode-btn img,
+			.ar-mode-btn svg {
+				display: block;
+				width: 100%;
+				height: 100%;
+			}
+
+			.ar-mode-btn.active {
+				border-color: #60a5fa;
+				background: rgba(37, 99, 235, 0.85);
+			}
 		</style>
 	</head>
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 11:39</div>
+		<div id="version">version: 11:46</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
 				<label for="mini-game-select">AR mini game</label>
 				<select id="mini-game-select" aria-label="Choose AR mini game"></select>
 			</div>
+		</div>
+
+		<div id="ar-placement-toolbar" class="hidden" aria-label="Placement mode">
+			<button type="button" class="ar-mode-btn active" id="ar-mode-trees" aria-label="Place trees" title="Trees"></button>
+			<button type="button" class="ar-mode-btn" id="ar-mode-fence" aria-label="Place fence" title="Fence"></button>
 		</div>
 
 		<div id="info">
@@ -198,11 +241,19 @@
 				scene.add( controller2 );
 				persistentSceneObjects.add( controller2 );
 
+				setupPlacementToolbarIcons();
+
 				registerMiniGame( createHitTestPlacementGame( {
 					id: 'trees',
 					label: 'Trees',
-					createPlacement: createTree,
-					uniformScale: true
+					uniformScale: true,
+					placementToolbar: {
+						defaultMode: 'trees',
+						modes: {
+							trees: { buttonId: 'ar-mode-trees', createPlacement: createTree },
+							fence: { buttonId: 'ar-mode-fence', createPlacement: createFence }
+						}
+					}
 				} ) );
 
 				registerMiniGame( createHitTestPlacementGame( {
@@ -360,6 +411,46 @@
 
 			}
 
+			const TREE_ICON_SVG = '<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="14" y="19" width="4" height="9" fill="#5c4033"/><polygon points="16,5 27,22 5,22" fill="#2d6a4f"/></svg>';
+			const FENCE_ICON_SVG = '<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="5" y="9" width="3" height="18" fill="#a67c52"/><rect x="24" y="9" width="3" height="18" fill="#a67c52"/><rect x="5" y="11" width="22" height="2.5" fill="#c9a66b"/><rect x="5" y="17" width="22" height="2.5" fill="#c9a66b"/><rect x="5" y="23" width="22" height="2.5" fill="#c9a66b"/></svg>';
+
+			function setupPlacementToolbarIcons() {
+
+				document.getElementById( 'ar-mode-trees' ).innerHTML = TREE_ICON_SVG;
+				document.getElementById( 'ar-mode-fence' ).innerHTML = FENCE_ICON_SVG;
+
+			}
+
+			function createFence() {
+
+				const fence = new THREE.Group();
+				const wood = new THREE.MeshPhongMaterial( { color: 0x8b6914 } );
+
+				const postGeometry = new THREE.BoxGeometry( 0.04, 0.4, 0.04 );
+
+				for ( const x of [ - 0.28, 0.28 ] ) {
+
+					const post = new THREE.Mesh( postGeometry, wood );
+					post.position.set( x, 0.2, 0 );
+					fence.add( post );
+
+				}
+
+				for ( let i = 0; i < 3; i ++ ) {
+
+					const rail = new THREE.Mesh(
+						new THREE.BoxGeometry( 0.6, 0.03, 0.025 ),
+						wood
+					);
+					rail.position.y = 0.1 + i * 0.14;
+					fence.add( rail );
+
+				}
+
+				return fence;
+
+			}
+
 			function createTree() {
 
 				const tree = new THREE.Group();
@@ -392,19 +483,93 @@
 
 			}
 
-			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false } ) {
+			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false, placementToolbar = null } ) {
 
 				function create( { scene, renderer, controller1, controller2 } ) {
 
 					let reticle;
 					let hitTestSource = null;
 					let hitTestSourceRequested = false;
+					let activePlacementMode = placementToolbar ? placementToolbar.defaultMode : null;
+					let toolbarElement = null;
+					let toolbarButtonHandlers = [];
+
+					function getPlacementObject() {
+
+						if ( placementToolbar ) {
+
+							return placementToolbar.modes[ activePlacementMode ].createPlacement();
+
+						}
+
+						return createPlacement();
+
+					}
+
+					function setPlacementMode( mode ) {
+
+						activePlacementMode = mode;
+
+						for ( const modeId of Object.keys( placementToolbar.modes ) ) {
+
+							const button = document.getElementById( placementToolbar.modes[ modeId ].buttonId );
+							button.classList.toggle( 'active', modeId === mode );
+
+						}
+
+					}
+
+					function bindPlacementToolbar() {
+
+						for ( const modeId of Object.keys( placementToolbar.modes ) ) {
+
+							const button = document.getElementById( placementToolbar.modes[ modeId ].buttonId );
+
+							function handler() {
+
+								setPlacementMode( modeId );
+
+							}
+
+							button.addEventListener( 'click', handler );
+							toolbarButtonHandlers.push( { button, handler } );
+
+						}
+
+					}
+
+					function showPlacementToolbar() {
+
+						toolbarElement = document.getElementById( 'ar-placement-toolbar' );
+						toolbarElement.classList.remove( 'hidden' );
+						bindPlacementToolbar();
+						setPlacementMode( placementToolbar.defaultMode );
+
+					}
+
+					function hidePlacementToolbar() {
+
+						for ( const { button, handler } of toolbarButtonHandlers ) {
+
+							button.removeEventListener( 'click', handler );
+
+						}
+
+						toolbarButtonHandlers = [];
+
+						if ( toolbarElement ) {
+
+							toolbarElement.classList.add( 'hidden' );
+
+						}
+
+					}
 
 					function onSelect() {
 
 						if ( reticle.visible ) {
 
-							const object = createPlacement();
+							const object = getPlacementObject();
 							reticle.matrix.decompose( object.position, object.quaternion, object.scale );
 
 							if ( uniformScale ) {
@@ -442,6 +607,12 @@
 							hitTestSourceRequested = false;
 							hitTestSource = null;
 
+							if ( placementToolbar ) {
+
+								showPlacementToolbar();
+
+							}
+
 						},
 
 						onSessionEnd() {
@@ -457,6 +628,12 @@
 							}
 
 							hitTestSourceRequested = false;
+
+							if ( placementToolbar ) {
+
+								hidePlacementToolbar();
+
+							}
 
 						},
 
