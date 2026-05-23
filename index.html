@@ -122,7 +122,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 11:27</div>
+		<div id="version">version: 11:31</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -153,6 +153,8 @@
 			let camera, scene, renderer;
 			let controller1, controller2;
 
+			const persistentSceneObjects = new Set();
+
 			let activeMiniGame = null;
 			let selectedMiniGameId = 'cylinders';
 
@@ -173,6 +175,7 @@
 				const light = new THREE.HemisphereLight( 0xffffff, 0xbbbbff, 3 );
 				light.position.set( 0.5, 1, 0.25 );
 				scene.add( light );
+				persistentSceneObjects.add( light );
 
 				//
 
@@ -189,9 +192,11 @@
 
 				controller1 = renderer.xr.getController( 0 );
 				scene.add( controller1 );
+				persistentSceneObjects.add( controller1 );
 
 				controller2 = renderer.xr.getController( 1 );
 				scene.add( controller2 );
+				persistentSceneObjects.add( controller2 );
 
 				registerMiniGame( createHitTestPlacementGame( {
 					id: 'cylinders',
@@ -268,6 +273,44 @@
 
 			}
 
+			function resetSceneForHomeScreen() {
+
+				const objectsToRemove = scene.children.filter( ( child ) => ! persistentSceneObjects.has( child ) );
+				const disposedGeometries = new Set();
+
+				for ( const object of objectsToRemove ) {
+
+					scene.remove( object );
+
+					object.traverse( ( node ) => {
+
+						if ( node.material ) {
+
+							if ( Array.isArray( node.material ) ) {
+
+								node.material.forEach( ( material ) => material.dispose() );
+
+							} else {
+
+								node.material.dispose();
+
+							}
+
+						}
+
+						if ( node.geometry && ! disposedGeometries.has( node.geometry ) ) {
+
+							node.geometry.dispose();
+							disposedGeometries.add( node.geometry );
+
+						}
+
+					} );
+
+				}
+
+			}
+
 			function setupXRSessionHandlers() {
 
 				const homeScreen = document.getElementById( 'home-screen' );
@@ -296,6 +339,8 @@
 						activeMiniGame = null;
 
 					}
+
+					resetSceneForHomeScreen();
 
 					homeScreen.classList.remove( 'hidden' );
 					miniGameSelect.disabled = false;
@@ -359,7 +404,15 @@
 
 							controller1.removeEventListener( 'select', onSelect );
 							controller2.removeEventListener( 'select', onSelect );
-							scene.remove( reticle );
+
+							if ( hitTestSource ) {
+
+								hitTestSource.cancel();
+								hitTestSource = null;
+
+							}
+
+							hitTestSourceRequested = false;
 
 						},
 
