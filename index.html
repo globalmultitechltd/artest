@@ -118,60 +118,64 @@
 				cursor: pointer;
 			}
 
-			#ar-placement-toolbar {
+			#world-builder-ui {
 				position: fixed;
 				top: 60px;
 				right: 12px;
 				z-index: 10001;
-				display: flex;
-				flex-direction: column;
-				gap: 10px;
+				min-width: 160px;
+				padding: 12px 14px;
+				background: rgba(0, 0, 0, 0.85);
+				border: 1px solid rgba(255, 255, 255, 0.25);
+				border-radius: 12px;
+				color: #fff;
+				font-family: system-ui, sans-serif;
 				pointer-events: auto;
 			}
 
-			#ar-placement-toolbar.hidden {
+			#world-builder-ui.hidden {
 				display: none;
 			}
 
-			.ar-mode-btn {
-				width: 56px;
-				height: 56px;
-				padding: 8px;
-				border: 2px solid rgba(255, 255, 255, 0.35);
-				border-radius: 12px;
-				background: rgba(0, 0, 0, 0.75);
-				cursor: pointer;
-				box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
-			}
-
-			.ar-mode-btn img,
-			.ar-mode-btn svg {
+			#world-builder-ui label {
 				display: block;
-				width: 100%;
-				height: 100%;
+				margin-bottom: 8px;
+				font-size: 12px;
+				font-weight: 600;
+				letter-spacing: 0.04em;
+				text-transform: uppercase;
+				opacity: 0.75;
 			}
 
-			.ar-mode-btn.active {
-				border-color: #60a5fa;
-				background: rgba(37, 99, 235, 0.85);
+			#world-builder-object-select {
+				width: 100%;
+				padding: 10px 12px;
+				font-size: 15px;
+				font-weight: 600;
+				color: #fff;
+				background: #1e293b;
+				border: 1px solid rgba(255, 255, 255, 0.2);
+				border-radius: 8px;
+				appearance: none;
+				cursor: pointer;
 			}
 		</style>
 	</head>
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 11:46</div>
+		<div id="version">version: 11:51</div>
+
+		<div id="world-builder-ui" class="hidden">
+			<label for="world-builder-object-select">Objects</label>
+			<select id="world-builder-object-select" aria-label="Choose object to place"></select>
+		</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
 				<label for="mini-game-select">AR mini game</label>
 				<select id="mini-game-select" aria-label="Choose AR mini game"></select>
 			</div>
-		</div>
-
-		<div id="ar-placement-toolbar" class="hidden" aria-label="Placement mode">
-			<button type="button" class="ar-mode-btn active" id="ar-mode-trees" aria-label="Place trees" title="Trees"></button>
-			<button type="button" class="ar-mode-btn" id="ar-mode-fence" aria-label="Place fence" title="Fence"></button>
 		</div>
 
 		<div id="info">
@@ -199,7 +203,7 @@
 			const persistentSceneObjects = new Set();
 
 			let activeMiniGame = null;
-			let selectedMiniGameId = 'trees';
+			let selectedMiniGameId = 'world-builder';
 
 			const miniGames = {};
 			const AR_START_LABEL = 'START AR MINI GAME';
@@ -241,17 +245,16 @@
 				scene.add( controller2 );
 				persistentSceneObjects.add( controller2 );
 
-				setupPlacementToolbarIcons();
-
 				registerMiniGame( createHitTestPlacementGame( {
-					id: 'trees',
-					label: 'Trees',
-					uniformScale: true,
-					placementToolbar: {
-						defaultMode: 'trees',
-						modes: {
-							trees: { buttonId: 'ar-mode-trees', createPlacement: createTree },
-							fence: { buttonId: 'ar-mode-fence', createPlacement: createFence }
+					id: 'world-builder',
+					label: 'World Builder',
+					objectPicker: {
+						uiId: 'world-builder-ui',
+						selectId: 'world-builder-object-select',
+						defaultObject: 'trees',
+						objects: {
+							trees: { label: 'Trees', createPlacement: createTree, uniformScale: true },
+							'fence-segment': { label: 'Fence segment', createPlacement: createFenceSegment }
 						}
 					}
 				} ) );
@@ -411,17 +414,7 @@
 
 			}
 
-			const TREE_ICON_SVG = '<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="14" y="19" width="4" height="9" fill="#5c4033"/><polygon points="16,5 27,22 5,22" fill="#2d6a4f"/></svg>';
-			const FENCE_ICON_SVG = '<svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="5" y="9" width="3" height="18" fill="#a67c52"/><rect x="24" y="9" width="3" height="18" fill="#a67c52"/><rect x="5" y="11" width="22" height="2.5" fill="#c9a66b"/><rect x="5" y="17" width="22" height="2.5" fill="#c9a66b"/><rect x="5" y="23" width="22" height="2.5" fill="#c9a66b"/></svg>';
-
-			function setupPlacementToolbarIcons() {
-
-				document.getElementById( 'ar-mode-trees' ).innerHTML = TREE_ICON_SVG;
-				document.getElementById( 'ar-mode-fence' ).innerHTML = FENCE_ICON_SVG;
-
-			}
-
-			function createFence() {
+			function createFenceSegment() {
 
 				const fence = new THREE.Group();
 				const wood = new THREE.MeshPhongMaterial( { color: 0x8b6914 } );
@@ -483,22 +476,23 @@
 
 			}
 
-			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false, placementToolbar = null } ) {
+			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false, objectPicker = null } ) {
 
 				function create( { scene, renderer, controller1, controller2 } ) {
 
 					let reticle;
 					let hitTestSource = null;
 					let hitTestSourceRequested = false;
-					let activePlacementMode = placementToolbar ? placementToolbar.defaultMode : null;
-					let toolbarElement = null;
-					let toolbarButtonHandlers = [];
+					let activeObjectId = objectPicker ? objectPicker.defaultObject : null;
+					let objectPickerElement = null;
+					let objectSelectElement = null;
+					let objectSelectHandler = null;
 
 					function getPlacementObject() {
 
-						if ( placementToolbar ) {
+						if ( objectPicker ) {
 
-							return placementToolbar.modes[ activePlacementMode ].createPlacement();
+							return objectPicker.objects[ activeObjectId ].createPlacement();
 
 						}
 
@@ -506,62 +500,65 @@
 
 					}
 
-					function setPlacementMode( mode ) {
+					function shouldUniformScale() {
 
-						activePlacementMode = mode;
+						if ( objectPicker ) {
 
-						for ( const modeId of Object.keys( placementToolbar.modes ) ) {
-
-							const button = document.getElementById( placementToolbar.modes[ modeId ].buttonId );
-							button.classList.toggle( 'active', modeId === mode );
+							return !! objectPicker.objects[ activeObjectId ].uniformScale;
 
 						}
+
+						return uniformScale;
 
 					}
 
-					function bindPlacementToolbar() {
+					function showObjectPicker() {
 
-						for ( const modeId of Object.keys( placementToolbar.modes ) ) {
+						objectPickerElement = document.getElementById( objectPicker.uiId );
+						objectSelectElement = document.getElementById( objectPicker.selectId );
 
-							const button = document.getElementById( placementToolbar.modes[ modeId ].buttonId );
+						objectSelectElement.replaceChildren();
 
-							function handler() {
+						for ( const objectId of Object.keys( objectPicker.objects ) ) {
 
-								setPlacementMode( modeId );
-
-							}
-
-							button.addEventListener( 'click', handler );
-							toolbarButtonHandlers.push( { button, handler } );
+							const option = document.createElement( 'option' );
+							option.value = objectId;
+							option.textContent = objectPicker.objects[ objectId ].label;
+							objectSelectElement.appendChild( option );
 
 						}
+
+						activeObjectId = objectPicker.defaultObject;
+						objectSelectElement.value = activeObjectId;
+
+						objectSelectHandler = () => {
+
+							activeObjectId = objectSelectElement.value;
+
+						};
+
+						objectSelectElement.addEventListener( 'change', objectSelectHandler );
+						objectPickerElement.classList.remove( 'hidden' );
 
 					}
 
-					function showPlacementToolbar() {
+					function hideObjectPicker() {
 
-						toolbarElement = document.getElementById( 'ar-placement-toolbar' );
-						toolbarElement.classList.remove( 'hidden' );
-						bindPlacementToolbar();
-						setPlacementMode( placementToolbar.defaultMode );
+						if ( objectSelectElement && objectSelectHandler ) {
 
-					}
-
-					function hidePlacementToolbar() {
-
-						for ( const { button, handler } of toolbarButtonHandlers ) {
-
-							button.removeEventListener( 'click', handler );
+							objectSelectElement.removeEventListener( 'change', objectSelectHandler );
 
 						}
 
-						toolbarButtonHandlers = [];
+						objectSelectHandler = null;
 
-						if ( toolbarElement ) {
+						if ( objectPickerElement ) {
 
-							toolbarElement.classList.add( 'hidden' );
+							objectPickerElement.classList.add( 'hidden' );
 
 						}
+
+						activeObjectId = objectPicker.defaultObject;
 
 					}
 
@@ -572,12 +569,12 @@
 							const object = getPlacementObject();
 							reticle.matrix.decompose( object.position, object.quaternion, object.scale );
 
-							if ( uniformScale ) {
+							if ( shouldUniformScale() ) {
 
 								const scale = Math.random() * 1.2 + 0.8;
 								object.scale.set( scale, scale, scale );
 
-							} else {
+							} else if ( ! objectPicker ) {
 
 								object.scale.y = Math.random() * 2 + 1;
 
@@ -607,9 +604,9 @@
 							hitTestSourceRequested = false;
 							hitTestSource = null;
 
-							if ( placementToolbar ) {
+							if ( objectPicker ) {
 
-								showPlacementToolbar();
+								showObjectPicker();
 
 							}
 
@@ -629,9 +626,9 @@
 
 							hitTestSourceRequested = false;
 
-							if ( placementToolbar ) {
+							if ( objectPicker ) {
 
-								hidePlacementToolbar();
+								hideObjectPicker();
 
 							}
 
