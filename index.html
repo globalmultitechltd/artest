@@ -227,7 +227,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 12:55</div>
+		<div id="version">version: 13:01</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -249,6 +249,7 @@
 				<button class="spawn-type-button active" type="button" data-spawn-type="tree">Tree</button>
 				<button class="spawn-type-button" type="button" data-spawn-type="cylinder">Cylinder</button>
 				<button class="spawn-type-button" type="button" data-spawn-type="cuboid">Cuboid</button>
+				<button class="spawn-type-button" type="button" data-spawn-type="fence">Fence</button>
 			</div>
 		</div>
 
@@ -326,7 +327,7 @@
 					id: 'world-builder',
 					label: 'World Builder',
 					createPlacement: createWorldBuilderPlacement,
-					uniformScale: true
+					uniformScale: () => selectedWorldBuilderSpawnType !== 'fence'
 				} ) );
 
 				registerMiniGame( createHitTestPlacementGame( {
@@ -585,6 +586,58 @@
 
 			}
 
+			function createFence() {
+
+				const fence = new THREE.Group();
+				const wood = new THREE.MeshPhongMaterial( { color: 0x8f6b4f } );
+
+				const sectionWidth = 0.64;
+				const sectionHeight = 0.88;
+				const postWidth = 0.05;
+				const postDepth = 0.05;
+				const railHeight = 0.045;
+				const slatCount = 7;
+				const slatWidth = 0.018;
+				const slatHeight = sectionHeight - 0.28;
+				const railSpan = sectionWidth - postWidth * 2;
+
+				const postGeometry = new THREE.BoxGeometry( postWidth, sectionHeight, postDepth );
+				postGeometry.translate( 0, sectionHeight * 0.5, 0 );
+
+				const leftPost = new THREE.Mesh( postGeometry, wood );
+				leftPost.position.x = - sectionWidth * 0.5 + postWidth * 0.5;
+				fence.add( leftPost );
+
+				const rightPost = new THREE.Mesh( postGeometry, wood );
+				rightPost.position.x = sectionWidth * 0.5 - postWidth * 0.5;
+				fence.add( rightPost );
+
+				const railGeometry = new THREE.BoxGeometry( railSpan, railHeight, postDepth );
+
+				const bottomRail = new THREE.Mesh( railGeometry, wood );
+				bottomRail.position.set( 0, 0.14, 0 );
+				fence.add( bottomRail );
+
+				const topRail = new THREE.Mesh( railGeometry, wood );
+				topRail.position.set( 0, sectionHeight - 0.1, 0 );
+				fence.add( topRail );
+
+				const slatGeometry = new THREE.BoxGeometry( slatWidth, slatHeight, postDepth * 0.7 );
+				slatGeometry.translate( 0, slatHeight * 0.5 + 0.14, 0 );
+
+				for ( let i = 0; i < slatCount; i ++ ) {
+
+					const slat = new THREE.Mesh( slatGeometry, wood );
+					const t = i / ( slatCount - 1 );
+					slat.position.x = - railSpan * 0.5 + postWidth + t * ( railSpan - postWidth * 2 );
+					fence.add( slat );
+
+				}
+
+				return fence;
+
+			}
+
 			function createWorldBuilderPlacement() {
 
 				switch ( selectedWorldBuilderSpawnType ) {
@@ -593,6 +646,8 @@
 						return createCylinder();
 					case 'cuboid':
 						return createCuboid();
+					case 'fence':
+						return createFence();
 					case 'tree':
 					default:
 						return createTree();
