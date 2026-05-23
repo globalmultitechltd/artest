@@ -118,85 +118,50 @@
 				cursor: pointer;
 			}
 
-			#ar-dom-overlay {
+			#shooter-hud {
 				display: none;
 				position: fixed;
-				inset: 0;
+				left: 0;
+				right: 0;
+				bottom: 96px;
 				z-index: 10001;
+				text-align: center;
+				font-family: system-ui, sans-serif;
+				font-size: 14px;
+				font-weight: 600;
+				color: #fff;
+				text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
 				pointer-events: none;
 			}
 
-			#ar-overlay-exit {
-				position: absolute;
-				top: 20px;
-				right: 20px;
-				width: 38px;
-				height: 38px;
-				pointer-events: auto;
-				cursor: pointer;
-			}
-
-			#ar-overlay-exit path {
-				stroke: #fff;
-				stroke-width: 2;
-			}
-
-			#world-builder-ui {
-				position: absolute;
-				top: 68px;
-				right: 12px;
-				min-width: 160px;
-				padding: 12px 14px;
-				background: rgba(0, 0, 0, 0.85);
-				border: 1px solid rgba(255, 255, 255, 0.25);
-				border-radius: 12px;
-				color: #fff;
-				font-family: system-ui, sans-serif;
-				pointer-events: auto;
-			}
-
-			#world-builder-ui.hidden {
-				display: none;
-			}
-
-			#world-builder-ui label {
+			#shooter-hud.visible {
 				display: block;
-				margin-bottom: 8px;
-				font-size: 12px;
-				font-weight: 600;
-				letter-spacing: 0.04em;
-				text-transform: uppercase;
-				opacity: 0.75;
 			}
 
-			#world-builder-object-select {
-				width: 100%;
-				padding: 10px 12px;
-				font-size: 15px;
-				font-weight: 600;
-				color: #fff;
-				background: #1e293b;
-				border: 1px solid rgba(255, 255, 255, 0.2);
-				border-radius: 8px;
-				appearance: none;
-				cursor: pointer;
+			#shooter-crosshair {
+				display: none;
+				position: fixed;
+				left: 50%;
+				top: 50%;
+				width: 22px;
+				height: 22px;
+				margin: -11px 0 0 -11px;
+				z-index: 10001;
+				border: 2px solid rgba(255, 255, 255, 0.85);
+				border-radius: 50%;
+				box-shadow: 0 0 8px rgba(0, 0, 0, 0.6);
+				pointer-events: none;
+			}
+
+			#shooter-crosshair.visible {
+				display: block;
 			}
 		</style>
 	</head>
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 11:55</div>
-
-		<div id="ar-dom-overlay">
-			<svg id="ar-overlay-exit" width="38" height="38" viewBox="0 0 40 40" aria-label="Exit AR" role="button">
-				<path d="M 12,12 L 28,28 M 28,12 12,28"></path>
-			</svg>
-			<div id="world-builder-ui" class="hidden">
-				<label for="world-builder-object-select">Objects</label>
-				<select id="world-builder-object-select" aria-label="Choose object to place"></select>
-			</div>
-		</div>
+		<div id="version">version: 12:05</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -208,6 +173,9 @@
 		<div id="info">
 			<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> ar - hit test<br/>
 		</div>
+
+		<div id="shooter-hud">Tap anywhere to shoot</div>
+		<div id="shooter-crosshair" aria-hidden="true"></div>
 
 		<script type="importmap">
 			{
@@ -262,13 +230,7 @@
 
 				//
 
-				setupArDomOverlay();
-
-				document.body.appendChild( ARButton.createButton( renderer, {
-					requiredFeatures: [ 'hit-test' ],
-					optionalFeatures: [ 'dom-overlay' ],
-					domOverlay: { root: document.getElementById( 'ar-dom-overlay' ) }
-				} ) );
+				document.body.appendChild( ARButton.createButton( renderer, { requiredFeatures: [ 'hit-test' ] } ) );
 
 				controller1 = renderer.xr.getController( 0 );
 				scene.add( controller1 );
@@ -281,15 +243,8 @@
 				registerMiniGame( createHitTestPlacementGame( {
 					id: 'world-builder',
 					label: 'World Builder',
-					objectPicker: {
-						uiId: 'world-builder-ui',
-						selectId: 'world-builder-object-select',
-						defaultObject: 'trees',
-						objects: {
-							trees: { label: 'Trees', createPlacement: createTree, uniformScale: true },
-							'fence-segment': { label: 'Fence segment', createPlacement: createFenceSegment }
-						}
-					}
+					createPlacement: createTree,
+					uniformScale: true
 				} ) );
 
 				registerMiniGame( createHitTestPlacementGame( {
@@ -301,21 +256,12 @@
 					)
 				} ) );
 
+				registerMiniGame( createShooterGame() );
+
 				setupHomeScreen();
 				setupXRSessionHandlers();
 
 				window.addEventListener( 'resize', onWindowResize );
-
-			}
-
-			function setupArDomOverlay() {
-
-				document.getElementById( 'ar-overlay-exit' ).addEventListener( 'click', () => {
-
-					const session = renderer.xr.getSession();
-					if ( session ) session.end();
-
-				} );
 
 			}
 
@@ -426,6 +372,7 @@
 					activeMiniGame = miniGames[ selectedMiniGameId ].create( {
 						scene,
 						renderer,
+						camera,
 						controller1,
 						controller2
 					} );
@@ -455,36 +402,6 @@
 					}
 
 				} );
-
-			}
-
-			function createFenceSegment() {
-
-				const fence = new THREE.Group();
-				const wood = new THREE.MeshPhongMaterial( { color: 0x8b6914 } );
-
-				const postGeometry = new THREE.BoxGeometry( 0.04, 0.4, 0.04 );
-
-				for ( const x of [ - 0.28, 0.28 ] ) {
-
-					const post = new THREE.Mesh( postGeometry, wood );
-					post.position.set( x, 0.2, 0 );
-					fence.add( post );
-
-				}
-
-				for ( let i = 0; i < 3; i ++ ) {
-
-					const rail = new THREE.Mesh(
-						new THREE.BoxGeometry( 0.6, 0.03, 0.025 ),
-						wood
-					);
-					rail.position.y = 0.1 + i * 0.14;
-					fence.add( rail );
-
-				}
-
-				return fence;
 
 			}
 
@@ -520,105 +437,27 @@
 
 			}
 
-			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false, objectPicker = null } ) {
+			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false } ) {
 
 				function create( { scene, renderer, controller1, controller2 } ) {
 
 					let reticle;
 					let hitTestSource = null;
 					let hitTestSourceRequested = false;
-					let activeObjectId = objectPicker ? objectPicker.defaultObject : null;
-					let objectPickerElement = null;
-					let objectSelectElement = null;
-					let objectSelectHandler = null;
-
-					function getPlacementObject() {
-
-						if ( objectPicker ) {
-
-							return objectPicker.objects[ activeObjectId ].createPlacement();
-
-						}
-
-						return createPlacement();
-
-					}
-
-					function shouldUniformScale() {
-
-						if ( objectPicker ) {
-
-							return !! objectPicker.objects[ activeObjectId ].uniformScale;
-
-						}
-
-						return uniformScale;
-
-					}
-
-					function showObjectPicker() {
-
-						objectPickerElement = document.getElementById( objectPicker.uiId );
-						objectSelectElement = document.getElementById( objectPicker.selectId );
-
-						objectSelectElement.replaceChildren();
-
-						for ( const objectId of Object.keys( objectPicker.objects ) ) {
-
-							const option = document.createElement( 'option' );
-							option.value = objectId;
-							option.textContent = objectPicker.objects[ objectId ].label;
-							objectSelectElement.appendChild( option );
-
-						}
-
-						activeObjectId = objectPicker.defaultObject;
-						objectSelectElement.value = activeObjectId;
-
-						objectSelectHandler = () => {
-
-							activeObjectId = objectSelectElement.value;
-
-						};
-
-						objectSelectElement.addEventListener( 'change', objectSelectHandler );
-						objectPickerElement.classList.remove( 'hidden' );
-
-					}
-
-					function hideObjectPicker() {
-
-						if ( objectSelectElement && objectSelectHandler ) {
-
-							objectSelectElement.removeEventListener( 'change', objectSelectHandler );
-
-						}
-
-						objectSelectHandler = null;
-
-						if ( objectPickerElement ) {
-
-							objectPickerElement.classList.add( 'hidden' );
-
-						}
-
-						activeObjectId = objectPicker.defaultObject;
-
-					}
 
 					function onSelect() {
 
 						if ( reticle.visible ) {
 
-							const object = getPlacementObject();
+							const object = createPlacement();
 							reticle.matrix.decompose( object.position, object.quaternion, object.scale );
 
-							if ( shouldUniformScale() ) {
+							if ( uniformScale ) {
 
 								const scale = Math.random() * 1.2 + 0.8;
 								object.scale.set( scale, scale, scale );
 
-							} else if ( ! objectPicker ) {
+							} else {
 
 								object.scale.y = Math.random() * 2 + 1;
 
@@ -648,12 +487,6 @@
 							hitTestSourceRequested = false;
 							hitTestSource = null;
 
-							if ( objectPicker ) {
-
-								showObjectPicker();
-
-							}
-
 						},
 
 						onSessionEnd() {
@@ -669,12 +502,6 @@
 							}
 
 							hitTestSourceRequested = false;
-
-							if ( objectPicker ) {
-
-								hideObjectPicker();
-
-							}
 
 						},
 
@@ -724,6 +551,203 @@
 									reticle.visible = false;
 
 								}
+
+							}
+
+						}
+
+					};
+
+				}
+
+				return { id, label, create };
+
+			}
+
+			function createShooterGame() {
+
+				const id = 'shooter';
+				const label = 'Shooter';
+
+				function createRandomEnemyMesh() {
+
+					const material = new THREE.MeshPhongMaterial( {
+						color: 0xffffff * Math.random(),
+						flatShading: true
+					} );
+
+					const size = 0.12 + Math.random() * 0.1;
+					const shape = Math.floor( Math.random() * 6 );
+					let geometry;
+
+					switch ( shape ) {
+
+						case 0:
+							geometry = new THREE.BoxGeometry( size, size, size );
+							break;
+						case 1:
+							geometry = new THREE.SphereGeometry( size * 0.55, 10, 10 );
+							break;
+						case 2:
+							geometry = new THREE.ConeGeometry( size * 0.55, size * 1.2, 8 );
+							break;
+						case 3:
+							geometry = new THREE.CylinderGeometry( size * 0.45, size * 0.45, size * 1.1, 8 );
+							break;
+						case 4:
+							geometry = new THREE.TorusGeometry( size * 0.45, size * 0.16, 8, 12 );
+							break;
+						default:
+							geometry = new THREE.OctahedronGeometry( size * 0.65, 0 );
+
+					}
+
+					const mesh = new THREE.Mesh( geometry, material );
+					mesh.userData.spin = new THREE.Vector3(
+						( Math.random() - 0.5 ) * 2,
+						( Math.random() - 0.5 ) * 2,
+						( Math.random() - 0.5 ) * 2
+					);
+
+					return mesh;
+
+				}
+
+				function create( { scene, renderer, camera } ) {
+
+					const enemies = [];
+					const raycaster = new THREE.Raycaster();
+					const pointer = new THREE.Vector2();
+					const camDir = new THREE.Vector3();
+					const right = new THREE.Vector3();
+					const up = new THREE.Vector3();
+					const shooterHud = document.getElementById( 'shooter-hud' );
+					const shooterCrosshair = document.getElementById( 'shooter-crosshair' );
+
+					let lastSpawnTime = 0;
+					let lastFrameTime = 0;
+					const spawnIntervalMs = 1200;
+					const maxEnemies = 14;
+
+					function removeEnemy( mesh ) {
+
+						const index = enemies.indexOf( mesh );
+						if ( index === -1 ) return;
+
+						enemies.splice( index, 1 );
+						scene.remove( mesh );
+						mesh.geometry.dispose();
+						mesh.material.dispose();
+
+					}
+
+					function spawnEnemy() {
+
+						if ( enemies.length >= maxEnemies ) return;
+
+						const mesh = createRandomEnemyMesh();
+						camera.getWorldDirection( camDir );
+						right.crossVectors( camDir, camera.up ).normalize();
+						up.crossVectors( right, camDir ).normalize();
+
+						const distance = 2.5 + Math.random() * 1.5;
+						const spread = 1.4;
+
+						mesh.position.copy( camera.position )
+							.addScaledVector( camDir, distance )
+							.addScaledVector( right, ( Math.random() - 0.5 ) * spread )
+							.addScaledVector( up, ( Math.random() - 0.5 ) * spread * 0.85 );
+
+						mesh.userData.speed = 0.35 + Math.random() * 0.25;
+						scene.add( mesh );
+						enemies.push( mesh );
+
+					}
+
+					function shootAtScreen( clientX, clientY ) {
+
+						const rect = renderer.domElement.getBoundingClientRect();
+						pointer.x = ( ( clientX - rect.left ) / rect.width ) * 2 - 1;
+						pointer.y = - ( ( clientY - rect.top ) / rect.height ) * 2 + 1;
+
+						raycaster.setFromCamera( pointer, camera );
+
+						const hits = raycaster.intersectObjects( enemies, false );
+						if ( hits.length > 0 ) {
+
+							removeEnemy( hits[ 0 ].object );
+
+						}
+
+					}
+
+					function onPointerDown( event ) {
+
+						const point = event.touches ? event.touches[ 0 ] : event;
+						shootAtScreen( point.clientX, point.clientY );
+
+					}
+
+					return {
+
+						onSessionStart() {
+
+							lastSpawnTime = performance.now();
+							lastFrameTime = lastSpawnTime;
+							shooterHud.classList.add( 'visible' );
+							shooterCrosshair.classList.add( 'visible' );
+							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
+							spawnEnemy();
+
+						},
+
+						onSessionEnd() {
+
+							renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
+							shooterHud.classList.remove( 'visible' );
+							shooterCrosshair.classList.remove( 'visible' );
+
+							for ( const mesh of [ ...enemies ] ) {
+
+								removeEnemy( mesh );
+
+							}
+
+						},
+
+						onFrame( timestamp, frame ) {
+
+							if ( ! frame ) return;
+
+							const delta = Math.min( ( timestamp - lastFrameTime ) / 1000, 0.05 );
+							lastFrameTime = timestamp;
+
+							if ( timestamp - lastSpawnTime >= spawnIntervalMs ) {
+
+								spawnEnemy();
+								lastSpawnTime = timestamp;
+
+							}
+
+							for ( let i = enemies.length - 1; i >= 0; i -- ) {
+
+								const mesh = enemies[ i ];
+								const toCamera = camera.position.clone().sub( mesh.position );
+								const distance = toCamera.length();
+
+								if ( distance < 0.25 ) {
+
+									removeEnemy( mesh );
+									continue;
+
+								}
+
+								toCamera.normalize();
+								mesh.position.addScaledVector( toCamera, mesh.userData.speed * delta );
+
+								mesh.rotation.x += mesh.userData.spin.x * delta;
+								mesh.rotation.y += mesh.userData.spin.y * delta;
+								mesh.rotation.z += mesh.userData.spin.z * delta;
 
 							}
 
