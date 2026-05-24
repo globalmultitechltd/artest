@@ -443,6 +443,69 @@
 				display: block;
 			}
 
+			#zombies-hud {
+				display: none;
+				position: fixed;
+				left: 0;
+				right: 0;
+				bottom: 96px;
+				z-index: 10001;
+				text-align: center;
+				font-family: system-ui, sans-serif;
+				font-size: 14px;
+				font-weight: 600;
+				color: #fff;
+				text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+				pointer-events: none;
+			}
+
+			#zombies-hud.visible {
+				display: block;
+			}
+
+			#zombies-controls {
+				display: none;
+				position: absolute;
+				left: 50%;
+				bottom: 94px;
+				transform: translateX(-50%);
+				flex-direction: column;
+				align-items: stretch;
+				gap: 10px;
+				width: min(92vw, 320px);
+				padding: 14px;
+				color: #fff;
+				background: rgba(0, 0, 0, 0.82);
+				border: 1px solid rgba(255, 255, 255, 0.28);
+				border-radius: 14px;
+				box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+				pointer-events: auto;
+				touch-action: manipulation;
+			}
+
+			#zombies-controls.visible {
+				display: flex;
+			}
+
+			#zombies-controls label {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			#zombies-controls input[type="range"] {
+				width: 100%;
+				accent-color: #86efac;
+			}
+
+			#zombies-speed-value {
+				text-align: center;
+				opacity: 0.85;
+				font-size: 12px;
+			}
+
 			#ar-overlay {
 				display: none;
 				position: fixed;
@@ -803,7 +866,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 17:09</div>
+		<div id="version">version: 17:29</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -831,6 +894,7 @@
 		<div id="shooter-crosshair" aria-hidden="true"></div>
 		<div id="maze-hud">Walk through the maze to the green exit</div>
 		<div id="collect-items-hud">Level 1 · Collect all rings</div>
+		<div id="zombies-hud">Stand up straight in the middle of the play area, then tap to calibrate</div>
 		<div id="rc-car-hud">Point at the floor to place your RC car</div>
 		<div id="platforms-hud">Jump across platforms to reach the green exit on the far wall</div>
 
@@ -858,6 +922,14 @@
 					<span>Ball speed</span>
 					<input type="range" id="bounce-speed" min="1.2" max="5.5" step="0.1" value="2.8" />
 					<span id="bounce-speed-value">2.8</span>
+				</label>
+			</div>
+
+			<div id="zombies-controls" aria-label="Zombies controls">
+				<label for="zombies-speed">
+					<span>Zombie speed</span>
+					<input type="range" id="zombies-speed" min="0.15" max="1.4" step="0.05" value="0.45" />
+					<span id="zombies-speed-value">0.45</span>
 				</label>
 			</div>
 
@@ -1029,6 +1101,7 @@
 				registerMiniGame( createPlatformsGame() );
 				registerMiniGame( createBounceGame() );
 				registerMiniGame( createCollectItemsGame() );
+				registerMiniGame( createZombiesGame() );
 
 				setupWorldBuilderControls();
 				setupPaintControls();
@@ -1612,6 +1685,8 @@
 				const paintTipDot = document.getElementById( 'paint-tip-dot' );
 				const mazeHud = document.getElementById( 'maze-hud' );
 				const collectItemsHud = document.getElementById( 'collect-items-hud' );
+				const zombiesHud = document.getElementById( 'zombies-hud' );
+				const zombiesControls = document.getElementById( 'zombies-controls' );
 				const bounceHud = document.getElementById( 'bounce-hud' );
 				const bounceControls = document.getElementById( 'bounce-controls' );
 				const rcCarHud = document.getElementById( 'rc-car-hud' );
@@ -1633,6 +1708,9 @@
 					paintTipDot.classList.toggle( 'visible', isPaint );
 					mazeHud.classList.toggle( 'visible', selectedMiniGameId === 'maze' );
 					collectItemsHud.classList.toggle( 'visible', selectedMiniGameId === 'collect-items' );
+					const isZombies = selectedMiniGameId === 'zombies';
+					zombiesHud.classList.toggle( 'visible', isZombies );
+					zombiesControls.classList.toggle( 'visible', isZombies );
 					bounceHud.classList.toggle( 'visible', selectedMiniGameId === 'bounce' );
 					bounceControls.classList.toggle( 'visible', selectedMiniGameId === 'bounce' );
 					const isRcCar = selectedMiniGameId === 'rc-car';
@@ -1773,6 +1851,9 @@
 					paintTipDot.classList.remove( 'visible' );
 					paintTipDot.classList.remove( 'drawing' );
 					mazeHud.classList.remove( 'visible' );
+					collectItemsHud.classList.remove( 'visible' );
+					zombiesHud.classList.remove( 'visible' );
+					zombiesControls.classList.remove( 'visible' );
 					bounceHud.classList.remove( 'visible' );
 					bounceControls.classList.remove( 'visible' );
 					rcCarHud.classList.remove( 'visible' );
@@ -6746,6 +6827,974 @@
 								mesh.rotation.x += mesh.userData.spin.x * delta;
 								mesh.rotation.y += mesh.userData.spin.y * delta;
 								mesh.rotation.z += mesh.userData.spin.z * delta;
+
+							}
+
+						}
+
+					};
+
+				}
+
+				return { id, label, create };
+
+			}
+
+			function createZombiesGame() {
+
+				const id = 'zombies';
+				const label = 'Zombies';
+				const PLAY_AREA_RADIUS = 2.6;
+				const CENTER_RADIUS = 0.85;
+				const MIN_SPAWN_PLAYER_DIST = 1.1;
+				const MIN_ZOMBIE_SEPARATION = 0.55;
+				const MAX_SPAWN_ATTEMPTS = 48;
+				const ZOMBIE_HIT_RADIUS = 0.32;
+				const PLAYER_COLLISION_RADIUS = 0.38;
+				const DEFAULT_ZOMBIE_SPEED = 0.45;
+
+				function create( { scene, renderer, camera, roomBounds } ) {
+
+					let hitTestSource = null;
+					let hitTestSourceRequested = false;
+					let sessionStartTime = 0;
+					let lastFrameTime = 0;
+					let phase = 'setup';
+					let playReady = false;
+					let currentLevel = 1;
+					let playerHeight = 1.65;
+					let floorY = 0;
+					let zombieSpeed = DEFAULT_ZOMBIE_SPEED;
+					let pendingPointerShot = null;
+					let pendingXRSelect = null;
+					let pendingCalibrateTap = null;
+					let xrSession = null;
+
+					const zombies = [];
+					const bulletTrails = [];
+					const playCenter = new THREE.Vector3();
+					const raycaster = new THREE.Raycaster();
+					const pointer = new THREE.Vector2();
+					const camDir = new THREE.Vector3();
+					const rayOrigin = new THREE.Vector3();
+					const rayDirection = new THREE.Vector3();
+					const shotQuaternion = new THREE.Quaternion();
+					const bulletStart = new THREE.Vector3();
+					const dashDirection = new THREE.Vector3();
+					const dashQuaternion = new THREE.Quaternion();
+					const forwardVector = new THREE.Vector3( 0, 0, 1 );
+					const playerPos = new THREE.Vector3();
+					const spawnPos = new THREE.Vector3();
+					const toPlayer = new THREE.Vector3();
+					const lookTarget = new THREE.Vector3();
+					const hitPos = new THREE.Vector3();
+					const hitQuat = new THREE.Quaternion();
+					const hitScale = new THREE.Vector3();
+					const forward = new THREE.Vector3();
+					const spawnMatrix = new THREE.Matrix4();
+					const camPos = new THREE.Vector3();
+
+					const zombiesHud = document.getElementById( 'zombies-hud' );
+					const zombiesControls = document.getElementById( 'zombies-controls' );
+					const speedSlider = document.getElementById( 'zombies-speed' );
+					const speedValue = document.getElementById( 'zombies-speed-value' );
+					const shooterCrosshair = document.getElementById( 'shooter-crosshair' );
+					const gunSound = new Audio( 'sounds/gun.mp3' );
+					gunSound.preload = 'auto';
+					const zombieSound = new Audio( 'sounds/zombie.mp3' );
+					zombieSound.preload = 'auto';
+
+					const textureLoader = new THREE.TextureLoader();
+					const zombieTexture = textureLoader.load( 'textures/zombie.png' );
+					zombieTexture.colorSpace = THREE.SRGBColorSpace;
+
+					let sharedZombieGeometry = null;
+					let sharedZombieMaterial = null;
+					const dashSegmentGeometry = new THREE.BoxGeometry( 0.025, 0.025, 0.1 );
+					const projectileGeometry = new THREE.SphereGeometry( 0.035, 8, 8 );
+
+					const maxBulletLength = 6;
+					const muzzleOffset = 0.2;
+					const bulletSpeed = 18;
+					const bulletTrailLife = 0.35;
+					let wallPickMeshes = [];
+
+					function getViewCamera() {
+
+						if ( renderer.xr.isPresenting ) {
+
+							const xrCamera = renderer.xr.getCamera();
+
+							if ( xrCamera.cameras && xrCamera.cameras.length > 0 ) {
+
+								const eye = xrCamera.cameras[ 0 ];
+								eye.updateMatrixWorld( true );
+								return eye;
+
+							}
+
+							xrCamera.updateMatrixWorld( true );
+							return xrCamera;
+
+						}
+
+						camera.updateMatrixWorld( true );
+						return camera;
+
+					}
+
+					function getPlayerPosition() {
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( playerPos );
+
+						return playerPos;
+
+					}
+
+					function updateHud() {
+
+						if ( ! zombiesHud ) return;
+
+						if ( phase === 'setup' ) {
+
+							zombiesHud.textContent = 'Finding play area…';
+							return;
+
+						}
+
+						if ( phase === 'calibrate' ) {
+
+							zombiesHud.textContent = 'Stand up straight in the middle of the play area, then tap to calibrate';
+							return;
+
+						}
+
+						if ( phase === 'game_over' ) {
+
+							zombiesHud.textContent = 'A zombie got you! Tap to restart';
+							return;
+
+						}
+
+						const remaining = zombies.length;
+						zombiesHud.textContent =
+							'Level ' + currentLevel + ' · ' + remaining + ' zombie' + ( remaining === 1 ? '' : 's' ) + ' left';
+
+					}
+
+					function onSpeedInput() {
+
+						zombieSpeed = parseFloat( speedSlider.value );
+						speedValue.textContent = zombieSpeed.toFixed( 2 );
+
+					}
+
+					function ensureZombieAssets() {
+
+						if ( sharedZombieGeometry ) return;
+
+						const img = zombieTexture.image;
+						const aspect = ( img && img.width && img.height ) ? img.width / img.height : 0.55;
+						const height = playerHeight;
+						const width = height * aspect;
+
+						sharedZombieGeometry = new THREE.PlaneGeometry( width, height );
+						sharedZombieGeometry.translate( 0, height / 2, 0 );
+
+						sharedZombieMaterial = new THREE.MeshBasicMaterial( {
+							map: zombieTexture,
+							transparent: true,
+							alphaTest: 0.08,
+							side: THREE.DoubleSide,
+							depthWrite: false
+						} );
+
+					}
+
+					function rebuildZombieAssets() {
+
+						if ( sharedZombieGeometry ) {
+
+							sharedZombieGeometry.dispose();
+							sharedZombieGeometry = null;
+
+						}
+
+						if ( sharedZombieMaterial ) {
+
+							sharedZombieMaterial.dispose();
+							sharedZombieMaterial = null;
+
+						}
+
+						ensureZombieAssets();
+
+					}
+
+					function createZombieGroup() {
+
+						ensureZombieAssets();
+
+						const group = new THREE.Group();
+						const mesh = new THREE.Mesh( sharedZombieGeometry, sharedZombieMaterial );
+						group.add( mesh );
+						group.userData.mesh = mesh;
+
+						return group;
+
+					}
+
+					function disposeZombie( zombie ) {
+
+						scene.remove( zombie );
+
+					}
+
+					function clearZombies() {
+
+						for ( const zombie of zombies ) {
+
+							disposeZombie( zombie );
+
+						}
+
+						zombies.length = 0;
+
+					}
+
+					function isInsidePlayArea( point ) {
+
+						if ( roomBounds ) return roomBounds.containsPoint( point );
+
+						const dx = point.x - playCenter.x;
+						const dz = point.z - playCenter.z;
+
+						return ( dx * dx + dz * dz ) <= PLAY_AREA_RADIUS * PLAY_AREA_RADIUS;
+
+					}
+
+					function randomFloorPosition( target ) {
+
+						if ( roomBounds ) {
+
+							target.copy( roomBounds.getRandomFloorPoint() );
+
+						} else {
+
+							const angle = Math.random() * Math.PI * 2;
+							const radius = 0.65 + Math.random() * ( PLAY_AREA_RADIUS - 0.65 );
+
+							target.set(
+								playCenter.x + Math.cos( angle ) * radius,
+								floorY,
+								playCenter.z + Math.sin( angle ) * radius
+							);
+
+						}
+
+						target.y = floorY;
+
+						return target;
+
+					}
+
+					function isValidSpawn( point, placed, player ) {
+
+						if ( ! isInsidePlayArea( point ) ) return false;
+
+						const dx = point.x - player.x;
+						const dz = point.z - player.z;
+
+						if ( dx * dx + dz * dz < MIN_SPAWN_PLAYER_DIST * MIN_SPAWN_PLAYER_DIST ) return false;
+
+						for ( const zombie of placed ) {
+
+							const sepDx = point.x - zombie.position.x;
+							const sepDz = point.z - zombie.position.z;
+
+							if ( sepDx * sepDx + sepDz * sepDz < MIN_ZOMBIE_SEPARATION * MIN_ZOMBIE_SEPARATION ) return false;
+
+						}
+
+						return true;
+
+					}
+
+					function spawnZombies( count ) {
+
+						const player = getPlayerPosition();
+						const placed = [];
+
+						for ( let i = 0; i < count; i ++ ) {
+
+							let positioned = false;
+
+							for ( let attempt = 0; attempt < MAX_SPAWN_ATTEMPTS; attempt ++ ) {
+
+								randomFloorPosition( spawnPos );
+
+								if ( isValidSpawn( spawnPos, [ ...zombies, ...placed ], player ) ) {
+
+									positioned = true;
+									break;
+
+								}
+
+							}
+
+							if ( ! positioned ) randomFloorPosition( spawnPos );
+
+							const zombie = createZombieGroup();
+							zombie.position.copy( spawnPos );
+							scene.add( zombie );
+							zombies.push( zombie );
+							placed.push( zombie );
+
+						}
+
+						updateHud();
+
+					}
+
+					function beginPlayArea( center, y ) {
+
+						if ( playReady ) return;
+
+						playCenter.copy( center );
+						floorY = y;
+						playReady = true;
+						phase = 'calibrate';
+						updateHud();
+
+					}
+
+					function beginPlayAreaInRoom() {
+
+						beginPlayArea( roomBounds.center, roomBounds.floorY );
+
+					}
+
+					function beginPlayAreaFromHitMatrix( matrix ) {
+
+						matrix.decompose( hitPos, hitQuat, hitScale );
+						beginPlayArea( hitPos, hitPos.y );
+
+					}
+
+					function beginPlayAreaInFrontOfCamera() {
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( camPos );
+						viewCamera.getWorldDirection( forward );
+						forward.y = 0;
+
+						if ( forward.lengthSq() < 1e-6 ) forward.set( 0, 0, - 1 );
+						else forward.normalize();
+
+						hitPos.copy( camPos ).addScaledVector( forward, 2.0 );
+						hitPos.y = camPos.y - 1.45;
+						beginPlayArea( hitPos, hitPos.y );
+
+					}
+
+					function isPlayerNearCenter() {
+
+						const player = getPlayerPosition();
+						const center = roomBounds ? roomBounds.center : playCenter;
+						const dx = player.x - center.x;
+						const dz = player.z - center.z;
+
+						return ( dx * dx + dz * dz ) <= CENTER_RADIUS * CENTER_RADIUS;
+
+					}
+
+					function calibratePlayerHeight() {
+
+						const player = getPlayerPosition();
+						playerHeight = Math.max( 1.2, Math.min( 2.2, ( player.y - floorY ) * 1.08 ) );
+						rebuildZombieAssets();
+						phase = 'playing';
+						currentLevel = 1;
+						clearZombies();
+						spawnZombies( 1 );
+						updateHud();
+
+					}
+
+					function tryCalibrateFromTap() {
+
+						if ( phase !== 'calibrate' ) return;
+
+						if ( ! isPlayerNearCenter() ) {
+
+							zombiesHud.textContent = 'Move to the middle of the play area, then tap again';
+							return;
+
+						}
+
+						calibratePlayerHeight();
+
+					}
+
+					function onLevelComplete() {
+
+						currentLevel ++;
+						spawnZombies( currentLevel );
+
+					}
+
+					function startPlayingLevel( level ) {
+
+						currentLevel = level;
+						clearZombies();
+						spawnZombies( level );
+						phase = 'playing';
+						updateHud();
+
+					}
+
+					function onGameOver() {
+
+						phase = 'game_over';
+						clearZombies();
+						updateHud();
+
+					}
+
+					function playGunSound() {
+
+						const shotSound = gunSound.cloneNode();
+						shotSound.volume = 0.85;
+						shotSound.play().catch( () => {} );
+
+					}
+
+					function playZombieHitSound() {
+
+						const hit = zombieSound.cloneNode();
+						hit.volume = 0.9;
+						hit.play().catch( () => {} );
+
+					}
+
+					function getZombieMeshes() {
+
+						return zombies.map( ( zombie ) => zombie.userData.mesh ).filter( Boolean );
+
+					}
+
+					function getBulletTrailLength( origin, direction ) {
+
+						let minDist = maxBulletLength;
+						raycaster.set( origin, direction );
+
+						if ( wallPickMeshes.length > 0 ) {
+
+							const wallHits = raycaster.intersectObjects( wallPickMeshes, false );
+
+							if ( wallHits.length > 0 ) minDist = Math.min( minDist, wallHits[ 0 ].distance );
+
+						}
+
+						const zombieMeshes = getZombieMeshes();
+
+						if ( zombieMeshes.length > 0 ) {
+
+							const zombieHits = raycaster.intersectObjects( zombieMeshes, false );
+
+							if ( zombieHits.length > 0 ) minDist = Math.min( minDist, zombieHits[ 0 ].distance );
+
+						}
+
+						return Math.max( 0.15, minDist );
+
+					}
+
+					function spawnBulletTrail( origin, direction ) {
+
+						const normalizedDirection = direction.clone().normalize();
+						bulletStart.copy( origin ).addScaledVector( normalizedDirection, muzzleOffset );
+						const trailLength = getBulletTrailLength( bulletStart, normalizedDirection );
+
+						dashQuaternion.setFromUnitVectors( forwardVector, normalizedDirection );
+
+						if ( Number.isNaN( dashQuaternion.x ) ) dashQuaternion.identity();
+
+						const trailGroup = new THREE.Group();
+						const dashMaterial = new THREE.MeshBasicMaterial( {
+							color: 0xfff44d,
+							transparent: true,
+							opacity: 1,
+							depthTest: false
+						} );
+
+						const segmentStep = 0.16;
+						const segmentLength = 0.1;
+
+						for ( let distance = 0; distance < trailLength; distance += segmentStep ) {
+
+							const dash = new THREE.Mesh( dashSegmentGeometry, dashMaterial );
+							dash.position.copy( bulletStart ).addScaledVector( normalizedDirection, distance + segmentLength * 0.5 );
+							dash.quaternion.copy( dashQuaternion );
+							trailGroup.add( dash );
+
+						}
+
+						const projectileMaterial = new THREE.MeshBasicMaterial( {
+							color: 0xffffff,
+							transparent: true,
+							opacity: 1,
+							depthTest: false
+						} );
+						const projectile = new THREE.Mesh( projectileGeometry, projectileMaterial );
+						projectile.position.copy( bulletStart );
+						trailGroup.add( projectile );
+
+						trailGroup.renderOrder = 999;
+						scene.add( trailGroup );
+
+						bulletTrails.push( {
+							group: trailGroup,
+							projectile,
+							materials: [ dashMaterial, projectileMaterial ],
+							start: bulletStart.clone(),
+							direction: normalizedDirection.clone(),
+							length: trailLength,
+							distance: 0,
+							remaining: bulletTrailLife,
+							maxLife: bulletTrailLife
+						} );
+
+					}
+
+					function removeBulletTrail( trail ) {
+
+						scene.remove( trail.group );
+
+						for ( const material of trail.materials ) {
+
+							material.dispose();
+
+						}
+
+					}
+
+					function updateBulletTrails( delta ) {
+
+						for ( let i = bulletTrails.length - 1; i >= 0; i -- ) {
+
+							const trail = bulletTrails[ i ];
+							trail.distance = Math.min( trail.length, trail.distance + bulletSpeed * delta );
+							trail.projectile.position.copy( trail.start ).addScaledVector( trail.direction, trail.distance );
+
+							trail.remaining -= delta;
+							const fade = Math.max( 0, trail.remaining / trail.maxLife );
+
+							for ( const material of trail.materials ) {
+
+								material.opacity = fade;
+
+							}
+
+							if ( trail.remaining <= 0 ) {
+
+								removeBulletTrail( trail );
+								bulletTrails.splice( i, 1 );
+
+							}
+
+						}
+
+					}
+
+					function removeZombieAt( index ) {
+
+						const zombie = zombies[ index ];
+						disposeZombie( zombie );
+						zombies.splice( index, 1 );
+						playZombieHitSound();
+
+						if ( zombies.length === 0 && phase === 'playing' ) onLevelComplete();
+						else updateHud();
+
+					}
+
+					function tryHitRay() {
+
+						const zombieMeshes = getZombieMeshes();
+						const hits = raycaster.intersectObjects( zombieMeshes, false );
+
+						if ( hits.length > 0 ) {
+
+							const hitMesh = hits[ 0 ].object;
+
+							for ( let i = 0; i < zombies.length; i ++ ) {
+
+								if ( zombies[ i ].userData.mesh === hitMesh ) {
+
+									removeZombieAt( i );
+									return;
+
+								}
+
+							}
+
+						}
+
+						const viewCamera = getViewCamera();
+						let closestZombie = null;
+						let closestDistance = ZOMBIE_HIT_RADIUS;
+
+						for ( let i = 0; i < zombies.length; i ++ ) {
+
+							const zombie = zombies[ i ];
+							const mesh = zombie.userData.mesh;
+							mesh.getWorldPosition( spawnPos );
+							const distanceToRay = raycaster.ray.distanceToPoint( spawnPos );
+
+							if ( distanceToRay < closestDistance ) {
+
+								const toZombie = spawnPos.clone().sub( viewCamera.position );
+
+								if ( toZombie.dot( raycaster.ray.direction ) > 0 ) {
+
+									closestDistance = distanceToRay;
+									closestZombie = i;
+
+								}
+
+							}
+
+						}
+
+						if ( closestZombie !== null ) removeZombieAt( closestZombie );
+
+					}
+
+					function fireShot( origin, direction ) {
+
+						const normalizedDirection = direction.clone().normalize();
+
+						playGunSound();
+						spawnBulletTrail( origin, normalizedDirection );
+						raycaster.set( origin, normalizedDirection );
+						tryHitRay();
+
+					}
+
+					function shootAtScreen( clientX, clientY ) {
+
+						const viewCamera = getViewCamera();
+						const rect = renderer.domElement.getBoundingClientRect();
+						pointer.x = ( ( clientX - rect.left ) / rect.width ) * 2 - 1;
+						pointer.y = - ( ( clientY - rect.top ) / rect.height ) * 2 + 1;
+
+						raycaster.setFromCamera( pointer, viewCamera );
+						fireShot( raycaster.ray.origin, raycaster.ray.direction );
+
+					}
+
+					function shootFromXRSelect( event, frame ) {
+
+						const referenceSpace = renderer.xr.getReferenceSpace();
+						const pose = frame.getPose( event.inputSource.targetRaySpace, referenceSpace );
+
+						if ( ! pose ) return;
+
+						rayOrigin.set(
+							pose.transform.position.x,
+							pose.transform.position.y,
+							pose.transform.position.z
+						);
+
+						shotQuaternion.set(
+							pose.transform.orientation.x,
+							pose.transform.orientation.y,
+							pose.transform.orientation.z,
+							pose.transform.orientation.w
+						);
+
+						rayDirection.set( 0, 0, - 1 ).applyQuaternion( shotQuaternion );
+						fireShot( rayOrigin, rayDirection );
+
+					}
+
+					function onPointerDown( event ) {
+
+						event.preventDefault();
+						const point = event.changedTouches ? event.changedTouches[ 0 ] : event;
+
+						if ( phase === 'calibrate' || phase === 'game_over' ) {
+
+							pendingCalibrateTap = { x: point.clientX, y: point.clientY };
+							return;
+
+						}
+
+						if ( phase !== 'playing' ) return;
+
+						pendingPointerShot = { x: point.clientX, y: point.clientY };
+
+					}
+
+					function onXRSelect( event ) {
+
+						if ( phase === 'calibrate' || phase === 'game_over' ) {
+
+							pendingCalibrateTap = { xr: event };
+							return;
+
+						}
+
+						if ( phase !== 'playing' ) return;
+
+						pendingXRSelect = event;
+
+					}
+
+					function processPendingInput( frame ) {
+
+						if ( pendingCalibrateTap ) {
+
+							if ( phase === 'game_over' ) {
+
+								startPlayingLevel( 1 );
+
+							} else {
+
+								tryCalibrateFromTap();
+
+							}
+
+							pendingCalibrateTap = null;
+
+						}
+
+						if ( phase !== 'playing' ) return;
+
+						if ( pendingXRSelect ) {
+
+							shootFromXRSelect( pendingXRSelect, frame );
+							pendingXRSelect = null;
+
+						}
+
+						if ( pendingPointerShot ) {
+
+							shootAtScreen( pendingPointerShot.x, pendingPointerShot.y );
+							pendingPointerShot = null;
+
+						}
+
+					}
+
+					function updateZombies( delta ) {
+
+						if ( phase !== 'playing' || zombies.length === 0 ) return;
+
+						const player = getPlayerPosition();
+
+						for ( let i = zombies.length - 1; i >= 0; i -- ) {
+
+							const zombie = zombies[ i ];
+							toPlayer.copy( player ).sub( zombie.position );
+							toPlayer.y = 0;
+							const distance = toPlayer.length();
+
+							if ( distance < PLAYER_COLLISION_RADIUS ) {
+
+								onGameOver();
+								return;
+
+							}
+
+							if ( distance > 1e-4 ) {
+
+								toPlayer.normalize();
+								zombie.position.addScaledVector( toPlayer, zombieSpeed * delta );
+
+								lookTarget.copy( zombie.position ).add( toPlayer );
+								lookTarget.y = zombie.position.y;
+								zombie.lookAt( lookTarget );
+
+							}
+
+						}
+
+					}
+
+					function refreshWallPickMeshes() {
+
+						wallPickMeshes = [];
+
+						if ( roomBounds && roomBounds.walls ) {
+
+							wallPickMeshes = roomBounds.walls.map( ( wall ) => wall.mesh ).filter( Boolean );
+
+						}
+
+					}
+
+					return {
+
+						onSessionStart() {
+
+							hitTestSourceRequested = false;
+							hitTestSource = null;
+							sessionStartTime = performance.now();
+							lastFrameTime = 0;
+							playReady = false;
+							phase = 'setup';
+							currentLevel = 1;
+							pendingPointerShot = null;
+							pendingXRSelect = null;
+							pendingCalibrateTap = null;
+							clearZombies();
+
+							for ( const trail of [ ...bulletTrails ] ) removeBulletTrail( trail );
+							bulletTrails.length = 0;
+
+							refreshWallPickMeshes();
+							zombieSpeed = parseFloat( speedSlider.value );
+							speedValue.textContent = zombieSpeed.toFixed( 2 );
+							speedSlider.addEventListener( 'input', onSpeedInput );
+
+							renderer.domElement.style.touchAction = 'none';
+							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
+
+							xrSession = renderer.xr.getSession();
+
+							if ( xrSession ) xrSession.addEventListener( 'select', onXRSelect );
+
+							shooterCrosshair.classList.toggle( 'visible', phase === 'playing' );
+							updateHud();
+
+						},
+
+						onSessionEnd() {
+
+							renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
+							renderer.domElement.style.touchAction = '';
+							speedSlider.removeEventListener( 'input', onSpeedInput );
+
+							if ( xrSession ) {
+
+								xrSession.removeEventListener( 'select', onXRSelect );
+								xrSession = null;
+
+							}
+
+							pendingPointerShot = null;
+							pendingXRSelect = null;
+							pendingCalibrateTap = null;
+							shooterCrosshair.classList.remove( 'visible' );
+							clearZombies();
+
+							for ( const trail of [ ...bulletTrails ] ) removeBulletTrail( trail );
+							bulletTrails.length = 0;
+
+							if ( sharedZombieGeometry ) {
+
+								sharedZombieGeometry.dispose();
+								sharedZombieGeometry = null;
+
+							}
+
+							if ( sharedZombieMaterial ) {
+
+								sharedZombieMaterial.dispose();
+								sharedZombieMaterial = null;
+
+							}
+
+							dashSegmentGeometry.dispose();
+							projectileGeometry.dispose();
+							gunSound.pause();
+							gunSound.currentTime = 0;
+							zombieSound.pause();
+							zombieSound.currentTime = 0;
+							playReady = false;
+							phase = 'setup';
+							wallPickMeshes = [];
+
+						},
+
+						onFrame( timestamp, frame ) {
+
+							if ( ! frame ) return;
+
+							const delta = lastFrameTime > 0 ? Math.min( 0.05, ( timestamp - lastFrameTime ) / 1000 ) : 0;
+							lastFrameTime = timestamp;
+
+							processPendingInput( frame );
+
+							if ( phase === 'playing' ) updateBulletTrails( delta );
+
+							if ( ! playReady ) {
+
+								if ( roomBounds ) {
+
+									beginPlayAreaInRoom();
+
+								} else if ( hitTestSourceRequested === false ) {
+
+									const session = renderer.xr.getSession();
+
+									session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
+
+										session.requestHitTestSource( { space: viewerSpace } ).then( function ( source ) {
+
+											hitTestSource = source;
+
+										} );
+
+									} );
+
+									session.addEventListener( 'end', function () {
+
+										hitTestSourceRequested = false;
+										hitTestSource = null;
+
+									} );
+
+									hitTestSourceRequested = true;
+
+								}
+
+								if ( hitTestSource ) {
+
+									const referenceSpace = renderer.xr.getReferenceSpace();
+									const hitTestResults = frame.getHitTestResults( hitTestSource );
+
+									if ( hitTestResults.length ) {
+
+										spawnMatrix.fromArray( hitTestResults[ 0 ].getPose( referenceSpace ).transform.matrix );
+										beginPlayAreaFromHitMatrix( spawnMatrix );
+
+									}
+
+								}
+
+								if ( ! playReady && performance.now() - sessionStartTime > 2200 ) {
+
+									beginPlayAreaInFrontOfCamera();
+
+								}
+
+								updateHud();
+								return;
+
+							}
+
+							if ( phase === 'playing' ) {
+
+								updateZombies( delta );
+								shooterCrosshair.classList.add( 'visible' );
+
+							} else {
+
+								shooterCrosshair.classList.remove( 'visible' );
 
 							}
 
