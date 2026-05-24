@@ -646,7 +646,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 16:03</div>
+		<div id="version">version: 16:13</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1534,13 +1534,15 @@
 				const perimeterLine = new THREE.LineLoop( lineGeometry, lineMaterial );
 				boundaryGroup.add( perimeterLine );
 
+				// Shape uses (x, -z) so rotateX(-PI/2) below maps the shape back to world (x, _, z)
+				// instead of mirroring across z = 0.
 				const floorShape = new THREE.Shape();
 				for ( let i = 0; i < vertices.length; i ++ ) {
 
 					const vertex = vertices[ i ];
 
-					if ( i === 0 ) floorShape.moveTo( vertex.x, vertex.z );
-					else floorShape.lineTo( vertex.x, vertex.z );
+					if ( i === 0 ) floorShape.moveTo( vertex.x, - vertex.z );
+					else floorShape.lineTo( vertex.x, - vertex.z );
 
 				}
 
