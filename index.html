@@ -974,7 +974,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 18:38</div>
+		<div id="version">version: 18:40</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -6336,6 +6336,7 @@
 					let sessionStartTime = 0;
 					let playReady = false;
 					let currentLevel = 1;
+					let itemsInLevel = 0;
 					let floorY = 0;
 					let playMinY = 0;
 					let playMaxY = 0;
@@ -6393,9 +6394,10 @@
 						}
 
 						const remaining = rings.length;
+						const total = itemsInLevel || currentLevel;
 						collectItemsHud.textContent =
-							'Level ' + currentLevel + ' · ' + remaining + ' of ' + currentLevel +
-							' item' + ( remaining === 1 ? '' : 's' ) + ' left';
+							'Level ' + currentLevel + ' · ' + remaining + ' of ' + total +
+							' item' + ( total === 1 ? '' : 's' ) + ' left';
 
 					}
 
@@ -6497,7 +6499,30 @@
 
 					}
 
-					function isValidSpawn( point, placedRings, player ) {
+					function getMinSeparationForCount( count ) {
+
+						if ( count <= 6 ) return RING_MIN_SEPARATION;
+
+						let area;
+
+						if ( roomBounds ) {
+
+							const he = roomBounds.halfExtents;
+							area = ( he.x * 2 ) * ( he.z * 2 );
+
+						} else {
+
+							area = Math.PI * PLAY_AREA_RADIUS * PLAY_AREA_RADIUS;
+
+						}
+
+						const ideal = Math.sqrt( area / count ) * 0.55;
+
+						return Math.max( 0.22, Math.min( RING_MIN_SEPARATION, ideal ) );
+
+					}
+
+					function isValidSpawn( point, placedRings, player, minSeparation ) {
 
 						if ( ! isInsidePlayArea( point ) ) return false;
 
@@ -6505,7 +6530,7 @@
 
 						for ( const ring of placedRings ) {
 
-							if ( ring.position.distanceTo( point ) < RING_MIN_SEPARATION ) return false;
+							if ( ring.position.distanceTo( point ) < minSeparation ) return false;
 
 						}
 
@@ -6517,16 +6542,18 @@
 
 						const player = getPlayerPosition();
 						const placed = [];
+						const minSeparation = getMinSeparationForCount( count );
+						const maxAttempts = Math.min( 512, Math.max( MAX_SPAWN_ATTEMPTS, count * 32 ) );
 
 						for ( let i = 0; i < count; i ++ ) {
 
 							let positioned = false;
 
-							for ( let attempt = 0; attempt < MAX_SPAWN_ATTEMPTS; attempt ++ ) {
+							for ( let attempt = 0; attempt < maxAttempts; attempt ++ ) {
 
 								randomPlayPosition( spawnPos );
 
-								if ( isValidSpawn( spawnPos, [ ...rings, ...placed ], player ) ) {
+								if ( isValidSpawn( spawnPos, [ ...rings, ...placed ], player, minSeparation ) ) {
 
 									positioned = true;
 									break;
@@ -6545,6 +6572,14 @@
 
 						}
 
+					}
+
+					function startLevel( level ) {
+
+						currentLevel = Math.max( 1, level );
+						clearRings();
+						spawnRings( currentLevel );
+						itemsInLevel = rings.length;
 						updateHud();
 
 					}
@@ -6557,9 +6592,7 @@
 						floorY = y;
 						updatePlayHeightRange();
 						playReady = true;
-						currentLevel = 1;
-						spawnRings( 1 );
-						updateHud();
+						startLevel( 1 );
 
 					}
 
@@ -6594,8 +6627,7 @@
 
 					function onLevelComplete() {
 
-						currentLevel ++;
-						spawnRings( currentLevel );
+						startLevel( currentLevel + 1 );
 
 					}
 
@@ -6658,6 +6690,7 @@
 							lastFrameTime = 0;
 							playReady = false;
 							currentLevel = 1;
+							itemsInLevel = 0;
 							clearRings();
 							updateHud();
 
@@ -6675,6 +6708,7 @@
 							hitTestSourceRequested = false;
 							clearRings();
 							playReady = false;
+							itemsInLevel = 0;
 
 						},
 
