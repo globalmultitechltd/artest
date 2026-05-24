@@ -81,6 +81,44 @@
 				transform: scale(0.98);
 			}
 
+			#room-scale-persistence {
+				display: none;
+				flex-direction: row;
+				gap: 12px;
+				width: min(92vw, 340px);
+			}
+
+			#room-scale-persistence.visible {
+				display: flex;
+			}
+
+			#room-scale-persistence button {
+				flex: 1;
+				padding: 14px 12px;
+				font-family: system-ui, sans-serif;
+				font-size: 13px;
+				font-weight: 700;
+				letter-spacing: 0.03em;
+				text-transform: uppercase;
+				color: #fff;
+				background: rgba(30, 41, 59, 0.95);
+				border: 2px solid rgba(255, 255, 255, 0.4);
+				border-radius: 12px;
+				box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+				cursor: pointer;
+				touch-action: manipulation;
+			}
+
+			#room-scale-persistence button:disabled {
+				opacity: 0.4;
+				cursor: not-allowed;
+			}
+
+			#room-scale-persistence button:not(:disabled):active {
+				background: rgba(51, 65, 85, 0.98);
+				transform: scale(0.98);
+			}
+
 			#home-actions #ARButton {
 				position: static !important;
 				opacity: 1 !important;
@@ -686,7 +724,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 16:27</div>
+		<div id="version">version: 16:34</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -699,6 +737,10 @@
 			</div>
 			<div id="home-actions">
 				<button id="setup-room-scale-btn" type="button">Setup room scale</button>
+				<div id="room-scale-persistence" class="hidden" aria-label="Room scale storage">
+					<button id="save-room-scale-btn" type="button" disabled>Save room scale</button>
+					<button id="load-room-scale-btn" type="button" disabled>Load room scale</button>
+				</div>
 			</div>
 		</div>
 
@@ -802,6 +844,7 @@
 
 			const miniGames = {};
 			const AR_START_LABEL = 'START AR MINI GAME';
+			const ROOM_SCALE_STORAGE_KEY = 'artest-room-scale-v1';
 			const BLOCK_SIZE = 0.2;
 
 			const miniGameMusic = new Audio( 'sounds/music.mp3' );
@@ -1075,6 +1118,128 @@
 
 			}
 
+			function hasPersistedRoomScale() {
+
+				try {
+
+					return !! localStorage.getItem( ROOM_SCALE_STORAGE_KEY );
+
+				} catch {
+
+					return false;
+
+				}
+
+			}
+
+			function serializeRoomBounds( bounds ) {
+
+				return JSON.stringify( {
+					wallHeight: bounds.wallHeight,
+					vertices: bounds.vertices.map( ( vertex ) => ( {
+						x: vertex.x,
+						y: vertex.y,
+						z: vertex.z
+					} ) )
+				} );
+
+			}
+
+			function parsePersistedRoomScale() {
+
+				try {
+
+					const raw = localStorage.getItem( ROOM_SCALE_STORAGE_KEY );
+					if ( ! raw ) return null;
+
+					const data = JSON.parse( raw );
+					if ( ! data || ! Array.isArray( data.vertices ) || data.vertices.length < 3 ) return null;
+					if ( typeof data.wallHeight !== 'number' || ! Number.isFinite( data.wallHeight ) ) return null;
+
+					const vertices = data.vertices.map( ( vertex ) => {
+
+						if (
+							typeof vertex.x !== 'number' || ! Number.isFinite( vertex.x ) ||
+							typeof vertex.y !== 'number' || ! Number.isFinite( vertex.y ) ||
+							typeof vertex.z !== 'number' || ! Number.isFinite( vertex.z )
+						) {
+
+							return null;
+
+						}
+
+						return new THREE.Vector3( vertex.x, vertex.y, vertex.z );
+
+					} );
+
+					if ( vertices.some( ( vertex ) => vertex === null ) ) return null;
+
+					return {
+						vertices,
+						wallHeight: data.wallHeight
+					};
+
+				} catch {
+
+					return null;
+
+				}
+
+			}
+
+			function saveRoomScaleToStorage() {
+
+				if ( ! savedRoomBounds ) return false;
+
+				try {
+
+					localStorage.setItem( ROOM_SCALE_STORAGE_KEY, serializeRoomBounds( savedRoomBounds ) );
+					return true;
+
+				} catch {
+
+					return false;
+
+				}
+
+			}
+
+			function loadRoomScaleFromStorage() {
+
+				const parsed = parsePersistedRoomScale();
+				if ( ! parsed ) return false;
+
+				savedRoomBounds = {
+					vertices: parsed.vertices.map( ( vertex ) => vertex.clone() ),
+					wallHeight: parsed.wallHeight
+				};
+				roomScaleEnabled = true;
+
+				const roomScaleCheckbox = document.getElementById( 'room-scale-checkbox' );
+				if ( roomScaleCheckbox ) roomScaleCheckbox.checked = true;
+
+				return true;
+
+			}
+
+			function updateRoomScalePersistenceUI() {
+
+				const container = document.getElementById( 'room-scale-persistence' );
+				const saveBtn = document.getElementById( 'save-room-scale-btn' );
+				const loadBtn = document.getElementById( 'load-room-scale-btn' );
+				if ( ! container || ! saveBtn || ! loadBtn ) return;
+
+				const hasCurrentBounds = !! savedRoomBounds;
+				const hasStoredBounds = hasPersistedRoomScale();
+				const showPersistence = hasCurrentBounds || hasStoredBounds;
+
+				container.classList.toggle( 'visible', showPersistence );
+				container.classList.toggle( 'hidden', ! showPersistence );
+				saveBtn.disabled = ! hasCurrentBounds;
+				loadBtn.disabled = ! hasStoredBounds;
+
+			}
+
 			function setupHomeScreen() {
 
 				const select = document.getElementById( 'mini-game-select' );
@@ -1103,6 +1268,48 @@
 
 						roomScaleEnabled = roomScaleCheckbox.checked;
 						if ( ! roomScaleEnabled ) savedRoomBounds = null;
+						updateRoomScalePersistenceUI();
+
+					} );
+
+				}
+
+				const saveRoomScaleBtn = document.getElementById( 'save-room-scale-btn' );
+				const loadRoomScaleBtn = document.getElementById( 'load-room-scale-btn' );
+
+				if ( saveRoomScaleBtn ) {
+
+					saveRoomScaleBtn.addEventListener( 'click', () => {
+
+						if ( ! saveRoomScaleToStorage() ) return;
+
+						const originalLabel = saveRoomScaleBtn.textContent;
+						saveRoomScaleBtn.textContent = 'Saved';
+						updateRoomScalePersistenceUI();
+						window.setTimeout( () => {
+
+							saveRoomScaleBtn.textContent = originalLabel;
+
+						}, 1200 );
+
+					} );
+
+				}
+
+				if ( loadRoomScaleBtn ) {
+
+					loadRoomScaleBtn.addEventListener( 'click', () => {
+
+						if ( ! loadRoomScaleFromStorage() ) return;
+
+						const originalLabel = loadRoomScaleBtn.textContent;
+						loadRoomScaleBtn.textContent = 'Loaded';
+						updateRoomScalePersistenceUI();
+						window.setTimeout( () => {
+
+							loadRoomScaleBtn.textContent = originalLabel;
+
+						}, 1200 );
 
 					} );
 
@@ -1136,6 +1343,8 @@
 					} );
 
 				}
+
+				updateRoomScalePersistenceUI();
 
 			}
 
@@ -1261,6 +1470,7 @@
 							};
 							activeRoomScaleSetup = null;
 							roomScaleSetupEl.classList.remove( 'visible' );
+							updateRoomScalePersistenceUI();
 
 							if ( standalone ) {
 
@@ -1372,6 +1582,7 @@
 
 					}
 					standaloneRoomScaleSetup = false;
+					updateRoomScalePersistenceUI();
 					homeScreen.classList.remove( 'hidden' );
 					miniGameSelect.disabled = false;
 					if ( roomScaleCheckbox ) roomScaleCheckbox.disabled = false;
