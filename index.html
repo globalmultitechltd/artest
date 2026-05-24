@@ -528,7 +528,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:14</div>
+		<div id="version">version: 13:25</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1178,6 +1178,41 @@
 
 			}
 
+			function applyStretchedFloorUVs( geometry ) {
+
+				const positions = geometry.attributes.position;
+				const uvArray = new Float32Array( positions.count * 2 );
+
+				let minX = Infinity;
+				let maxX = - Infinity;
+				let minZ = Infinity;
+				let maxZ = - Infinity;
+
+				for ( let i = 0; i < positions.count; i ++ ) {
+
+					const x = positions.getX( i );
+					const z = positions.getZ( i );
+					minX = Math.min( minX, x );
+					maxX = Math.max( maxX, x );
+					minZ = Math.min( minZ, z );
+					maxZ = Math.max( maxZ, z );
+
+				}
+
+				const spanX = maxX - minX || 1;
+				const spanZ = maxZ - minZ || 1;
+
+				for ( let i = 0; i < positions.count; i ++ ) {
+
+					uvArray[ i * 2 ] = ( positions.getX( i ) - minX ) / spanX;
+					uvArray[ i * 2 + 1 ] = ( positions.getZ( i ) - minZ ) / spanZ;
+
+				}
+
+				geometry.setAttribute( 'uv', new THREE.BufferAttribute( uvArray, 2 ) );
+
+			}
+
 			function buildRoomBoundaryGroup( vertices, wallHeight ) {
 
 				const boundaryGroup = new THREE.Group();
@@ -1202,6 +1237,7 @@
 
 				const floorGeometry = new THREE.ShapeGeometry( floorShape );
 				floorGeometry.rotateX( - Math.PI / 2 );
+				applyStretchedFloorUVs( floorGeometry );
 				const floorMaterial = new THREE.MeshPhongMaterial( {
 					map: getRoomFloorTexture(),
 					side: THREE.DoubleSide
