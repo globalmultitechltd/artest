@@ -803,7 +803,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 17:01</div>
+		<div id="version">version: 17:09</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -832,7 +832,7 @@
 		<div id="maze-hud">Walk through the maze to the green exit</div>
 		<div id="collect-items-hud">Level 1 · Collect all rings</div>
 		<div id="rc-car-hud">Point at the floor to place your RC car</div>
-		<div id="platforms-hud">Jump across platforms to reach the green exit</div>
+		<div id="platforms-hud">Jump across platforms to reach the green exit on the far wall</div>
 
 		<div id="ar-overlay">
 			<div id="bounce-hud">Hits: 0</div>
@@ -3994,7 +3994,6 @@
 				const id = 'platforms';
 				const label = 'Platforms';
 				const MOVE_SPEED = 0.68;
-				const TURN_SPEED = 2.35;
 				const CUBE_HALF = 0.06;
 				const PLATFORM_HALF = 0.24;
 				const PLATFORM_THICKNESS = 0.08;
@@ -4004,7 +4003,14 @@
 				const MAX_JUMP_GAP = 0.72;
 				const EXIT_RADIUS = 0.22;
 				const PLAY_HALF = 1.05;
-				const HUD_PLAYING = 'Jump across platforms to reach the green exit';
+				const WALL_INSET = PLATFORM_HALF + 0.06;
+				const MIN_PLATFORM_SPACING = 0.3;
+				const MOVING_PLATFORM_CHANCE = 0.38;
+				const PLATFORM_PALETTE = [
+					0xf97316, 0xa855f7, 0x14b8a6, 0xf43f5e, 0xeab308,
+					0x06b6d4, 0x84cc16, 0xec4899, 0x8b5cf6, 0x0ea5e9
+				];
+				const HUD_PLAYING = 'Jump across platforms to reach the green exit on the far wall';
 				const HUD_LEVEL = 'Exit reached! Loading next layout…';
 				const HUD_PLACING = 'Point at the floor to place the play area';
 
@@ -4031,17 +4037,11 @@
 
 				}
 
-				function buildPlatformMesh( kind ) {
+				function buildPlatformMesh( color, isExit ) {
 
-					const colors = {
-						start: 0x3b82f6,
-						mid: 0x64748b,
-						exit: 0x22c55e
-					};
-					const emissive = kind === 'exit' ? 0x14532d : 0x000000;
 					const mat = new THREE.MeshPhongMaterial( {
-						color: colors[ kind ] || colors.mid,
-						emissive
+						color,
+						emissive: isExit ? 0x14532d : 0x000000
 					} );
 					const geo = new THREE.BoxGeometry(
 						PLATFORM_HALF * 2,
@@ -4055,54 +4055,159 @@
 
 				}
 
+				function clampToPlayArea( x, z ) {
+
+					const limit = PLAY_HALF - PLATFORM_HALF;
+
+					return {
+						x: THREE.MathUtils.clamp( x, - limit, limit ),
+						z: THREE.MathUtils.clamp( z, - limit, limit )
+					};
+
+				}
+
+				function pointOnWall( wall ) {
+
+					const span = 2 * ( PLAY_HALF - WALL_INSET );
+					const along = ( Math.random() - 0.5 ) * span;
+					const inset = PLAY_HALF - WALL_INSET;
+
+					switch ( wall ) {
+
+						case 0: return { x: inset, z: along };
+						case 1: return { x: - inset, z: along };
+						case 2: return { x: along, z: inset };
+						default: return { x: along, z: - inset };
+
+					}
+
+				}
+
+				function horizontalDistance( a, b ) {
+
+					const dx = a.x - b.x;
+					const dz = a.z - b.z;
+					return Math.sqrt( dx * dx + dz * dz );
+
+				}
+
+				function isTooClose( x, z, specs ) {
+
+					for ( const other of specs ) {
+
+						const dx = x - other.x;
+						const dz = z - other.z;
+
+						if ( dx * dx + dz * dz < MIN_PLATFORM_SPACING * MIN_PLATFORM_SPACING ) return true;
+
+					}
+
+					return false;
+
+				}
+
+				function pickMidColor( usedColors, index ) {
+
+					const color = PLATFORM_PALETTE[ index % PLATFORM_PALETTE.length ];
+
+					if ( ! usedColors.has( color ) ) {
+
+						usedColors.add( color );
+						return color;
+
+					}
+
+					return PLATFORM_PALETTE[ Math.floor( Math.random() * PLATFORM_PALETTE.length ) ];
+
+				}
+
+				function maybeAddMotion( spec ) {
+
+					if ( spec.kind !== 'mid' || Math.random() > MOVING_PLATFORM_CHANCE ) return;
+
+					const horizontal = Math.random() < 0.5;
+					spec.motion = {
+						type: horizontal ? 'horizontal' : 'vertical',
+						axis: Math.random() < 0.5 ? 'x' : 'z',
+						amplitude: 0.1 + Math.random() * 0.16,
+						speed: 0.85 + Math.random() * 1.15,
+						phase: Math.random() * Math.PI * 2,
+						baseX: spec.x,
+						baseY: spec.y,
+						baseZ: spec.z
+					};
+
+					if ( spec.motion.type === 'horizontal' ) {
+
+						const limit = PLAY_HALF - PLATFORM_HALF - spec.motion.amplitude - 0.04;
+
+						if ( spec.motion.axis === 'x' ) {
+
+							spec.motion.baseX = THREE.MathUtils.clamp( spec.x, - limit, limit );
+
+						} else {
+
+							spec.motion.baseZ = THREE.MathUtils.clamp( spec.z, - limit, limit );
+
+						}
+
+					}
+
+				}
+
 				function generateLevelLayout() {
 
-					const platformCount = 3 + Math.floor( Math.random() * 5 );
 					const specs = [];
-					let x = 0;
-					let z = 0;
-					let y = 0;
-					let angle = Math.random() * Math.PI * 2;
+					const usedColors = new Set();
+					const startWall = Math.floor( Math.random() * 4 );
+					const exitWall = ( startWall + 2 ) % 4;
+					const startPoint = pointOnWall( startWall );
+					const exitPoint = pointOnWall( exitWall );
+					const numMid = 3 + Math.floor( Math.random() * 5 );
 
-					specs.push( { x, z, y, kind: 'start' } );
+					const start = {
+						x: startPoint.x,
+						z: startPoint.z,
+						y: 0,
+						kind: 'start',
+						color: 0x3b82f6
+					};
+					specs.push( start );
 
-					for ( let i = 0; i < platformCount; i ++ ) {
+					let prev = start;
 
+					for ( let i = 1; i <= numMid; i ++ ) {
+
+						const t = i / ( numMid + 1 );
 						let placed = false;
 
-						for ( let attempt = 0; attempt < 24 && ! placed; attempt ++ ) {
+						for ( let attempt = 0; attempt < 28 && ! placed; attempt ++ ) {
 
-							angle += ( Math.random() - 0.5 ) * 1.1;
-							const dist = 0.42 + Math.random() * ( MAX_JUMP_GAP - 0.42 );
-							const nx = x + Math.cos( angle ) * dist;
-							const nz = z + Math.sin( angle ) * dist;
+							const jitter = ( Math.random() - 0.5 ) * 0.42;
+							let x = THREE.MathUtils.lerp( start.x, exitPoint.x, t ) + jitter;
+							let z = THREE.MathUtils.lerp( start.z, exitPoint.z, t ) + jitter;
+							const clamped = clampToPlayArea( x, z );
+							x = clamped.x;
+							z = clamped.z;
 
-							if ( Math.abs( nx ) > PLAY_HALF - PLATFORM_HALF || Math.abs( nz ) > PLAY_HALF - PLATFORM_HALF ) continue;
+							if ( isTooClose( x, z, specs ) ) continue;
 
-							let blocked = false;
+							const dist = horizontalDistance( prev, { x, z } );
 
-							for ( const other of specs ) {
-
-								const dx = nx - other.x;
-								const dz = nz - other.z;
-
-								if ( dx * dx + dz * dz < 0.28 * 0.28 ) {
-
-									blocked = true;
-									break;
-
-								}
-
-							}
-
-							if ( blocked ) continue;
+							if ( dist > MAX_JUMP_GAP || dist < 0.34 ) continue;
 
 							const stepUp = 0.1 + Math.random() * ( MAX_STEP_UP - 0.1 );
-							const ny = y + stepUp;
-							x = nx;
-							z = nz;
-							y = ny;
-							specs.push( { x, z, y, kind: 'mid' } );
+							const y = prev.y + stepUp;
+							const spec = {
+								x,
+								z,
+								y,
+								kind: 'mid',
+								color: pickMidColor( usedColors, i - 1 )
+							};
+							maybeAddMotion( spec );
+							specs.push( spec );
+							prev = spec;
 							placed = true;
 
 						}
@@ -4111,46 +4216,24 @@
 
 					}
 
-					let exitPlaced = false;
+					const exitStep = 0.08 + Math.random() * ( MAX_STEP_UP - 0.08 );
+					const exit = {
+						x: exitPoint.x,
+						z: exitPoint.z,
+						y: prev.y + exitStep,
+						kind: 'exit',
+						color: 0x22c55e
+					};
 
-					for ( let attempt = 0; attempt < 30 && ! exitPlaced; attempt ++ ) {
+					if ( horizontalDistance( start, exit ) < PLAY_HALF * 1.35 ) {
 
-						angle += ( Math.random() - 0.5 ) * 1.2;
-						const dist = 0.42 + Math.random() * ( MAX_JUMP_GAP - 0.42 );
-						const nx = x + Math.cos( angle ) * dist;
-						const nz = z + Math.sin( angle ) * dist;
-
-						if ( Math.abs( nx ) > PLAY_HALF - PLATFORM_HALF || Math.abs( nz ) > PLAY_HALF - PLATFORM_HALF ) continue;
-
-						let blocked = false;
-
-						for ( const other of specs ) {
-
-							const dx = nx - other.x;
-							const dz = nz - other.z;
-
-							if ( dx * dx + dz * dz < 0.3 * 0.3 ) {
-
-								blocked = true;
-								break;
-
-							}
-
-						}
-
-						if ( blocked ) continue;
-
-						const stepUp = 0.08 + Math.random() * ( MAX_STEP_UP - 0.08 );
-						specs.push( { x: nx, z: nz, y: y + stepUp, kind: 'exit' } );
-						exitPlaced = true;
+						const farExit = pointOnWall( exitWall );
+						exit.x = farExit.x;
+						exit.z = farExit.z;
 
 					}
 
-					if ( ! exitPlaced ) {
-
-						specs.push( { x: x + 0.5, z, y: Math.min( y + 0.18, MAX_STEP_UP * platformCount ), kind: 'exit' } );
-
-					}
+					specs.push( exit );
 
 					return specs;
 
@@ -4185,7 +4268,9 @@
 					const camPos = new THREE.Vector3();
 					const toPlayer = new THREE.Vector3();
 					const forward = new THREE.Vector3();
+					const right = new THREE.Vector3();
 					const up = new THREE.Vector3( 0, 1, 0 );
+					let groundedSpec = null;
 					const extraRot = new THREE.Quaternion();
 					const spawnMatrix = new THREE.Matrix4();
 					const lastValidPos = new THREE.Vector3();
@@ -4306,6 +4391,7 @@
 
 						let bestY = baseFloorY;
 						let onExit = false;
+						let supportingSpec = null;
 						const scale = levelGroup ? levelGroup.scale.x : 1;
 						const scaledHalf = PLATFORM_HALF * scale;
 						const localX = ( worldX - levelGroup.position.x ) / scale;
@@ -4330,12 +4416,81 @@
 
 								bestY = topY;
 								onExit = spec.kind === 'exit';
+								supportingSpec = spec;
 
 							}
 
 						}
 
-						return { surfaceY: bestY, onExit };
+						return { surfaceY: bestY, onExit, supportingSpec };
+
+					}
+
+					function syncPlatformMeshPosition( spec ) {
+
+						if ( spec.mesh ) {
+
+							spec.mesh.position.set( spec.x, spec.y, spec.z );
+
+						}
+
+						if ( spec.decorMesh ) {
+
+							spec.decorMesh.position.set(
+								spec.x,
+								spec.y + PLATFORM_THICKNESS + 0.21,
+								spec.z
+							);
+
+						}
+
+					}
+
+					function updatePlatformMotion( elapsed ) {
+
+						const scale = levelGroup ? levelGroup.scale.x : 1;
+						const carryCube = grounded && groundedSpec && groundedSpec.motion && cubeGroup;
+
+						for ( const spec of platformSpecs ) {
+
+							if ( ! spec.motion ) continue;
+
+							const prevX = spec.x;
+							const prevY = spec.y;
+							const prevZ = spec.z;
+							const motion = spec.motion;
+							const wave = Math.sin( elapsed * motion.speed + motion.phase ) * motion.amplitude;
+
+							spec.x = motion.baseX;
+							spec.y = motion.baseY;
+							spec.z = motion.baseZ;
+
+							if ( motion.type === 'vertical' ) {
+
+								spec.y = motion.baseY + wave;
+
+							} else if ( motion.axis === 'x' ) {
+
+								spec.x = motion.baseX + wave;
+
+							} else {
+
+								spec.z = motion.baseZ + wave;
+
+							}
+
+							if ( carryCube && groundedSpec === spec ) {
+
+								cubeGroup.position.x += ( spec.x - prevX ) * scale;
+								cubeGroup.position.y += ( spec.y - prevY ) * scale;
+								cubeGroup.position.z += ( spec.z - prevZ ) * scale;
+								lastValidPos.copy( cubeGroup.position );
+
+							}
+
+							syncPlatformMeshPosition( spec );
+
+						}
 
 					}
 
@@ -4347,10 +4502,11 @@
 
 						for ( const spec of specs ) {
 
-							const built = buildPlatformMesh( spec.kind );
+							const built = buildPlatformMesh( spec.color, spec.kind === 'exit' );
 							built.mesh.position.set( spec.x, spec.y, spec.z );
 							levelGroup.add( built.mesh );
 							levelGroup.userData.disposables.push( ...built.disposables );
+							spec.mesh = built.mesh;
 							platformSpecs.push( spec );
 							platformMeshes.push( built.mesh );
 
@@ -4367,6 +4523,7 @@
 								glow.position.set( spec.x, spec.y + PLATFORM_THICKNESS + 0.21, spec.z );
 								levelGroup.add( glow );
 								levelGroup.userData.disposables.push( glowGeo, glowMat );
+								spec.decorMesh = glow;
 
 							}
 
@@ -4391,6 +4548,7 @@
 						);
 						verticalVelocity = 0;
 						grounded = true;
+						groundedSpec = startSpec;
 						lastValidPos.copy( cubeGroup.position );
 
 					}
@@ -4503,31 +4661,26 @@
 
 						}
 
-						let turn = 0;
+						forward.set( 0, 0, - 1 ).applyQuaternion( levelGroup.quaternion );
+						right.set( 1, 0, 0 ).applyQuaternion( levelGroup.quaternion );
+						forward.y = 0;
+						right.y = 0;
 
-						if ( platformsDriveInput.left ) turn += 1;
-						if ( platformsDriveInput.right ) turn -= 1;
+						if ( forward.lengthSq() < 1e-6 ) forward.set( 0, 0, - 1 );
+						else forward.normalize();
 
-						if ( turn !== 0 ) {
+						if ( right.lengthSq() < 1e-6 ) right.set( 1, 0, 0 );
+						else right.normalize();
 
-							cubeGroup.rotation.y += turn * TURN_SPEED * delta;
+						moveDelta.set( 0, 0, 0 );
 
-						}
+						if ( platformsDriveInput.forward ) moveDelta.addScaledVector( forward, MOVE_SPEED * delta );
+						if ( platformsDriveInput.back ) moveDelta.addScaledVector( forward, - MOVE_SPEED * delta );
+						if ( platformsDriveInput.left ) moveDelta.addScaledVector( right, - MOVE_SPEED * delta );
+						if ( platformsDriveInput.right ) moveDelta.addScaledVector( right, MOVE_SPEED * delta );
 
-						let move = 0;
+						if ( moveDelta.lengthSq() > 0 ) {
 
-						if ( platformsDriveInput.forward ) move += 1;
-						if ( platformsDriveInput.back ) move -= 1;
-
-						if ( move !== 0 ) {
-
-							forward.set( 0, 0, - 1 ).applyQuaternion( cubeGroup.quaternion );
-							forward.y = 0;
-
-							if ( forward.lengthSq() < 1e-6 ) forward.set( 0, 0, - 1 );
-							else forward.normalize();
-
-							moveDelta.copy( forward ).multiplyScalar( move * MOVE_SPEED * delta );
 							testPos.copy( cubeGroup.position ).add( moveDelta );
 
 						} else {
@@ -4557,6 +4710,7 @@
 							testPos.y = targetSurface;
 							verticalVelocity = 0;
 							grounded = true;
+							groundedSpec = support.supportingSpec;
 
 							if ( support.onExit ) {
 
@@ -4586,6 +4740,7 @@
 						} else {
 
 							grounded = false;
+							groundedSpec = null;
 
 						}
 
@@ -4709,6 +4864,7 @@
 
 							}
 
+							updatePlatformMotion( performance.now() * 0.001 );
 							updateCube( delta );
 
 						}
