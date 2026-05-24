@@ -225,14 +225,14 @@
 
 			#bounce-hud {
 				display: none;
-				position: fixed;
+				position: absolute;
 				left: 0;
 				right: 0;
 				top: 110px;
-				z-index: 10001;
+				z-index: 10003;
 				text-align: center;
 				font-family: system-ui, sans-serif;
-				font-size: 16px;
+				font-size: 18px;
 				font-weight: 700;
 				color: #fff;
 				text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
@@ -528,7 +528,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 12:43</div>
+		<div id="version">version: 12:58</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -549,9 +549,9 @@
 		<div id="shooter-crosshair" aria-hidden="true"></div>
 		<div id="maze-hud">Walk through the maze to the green exit</div>
 		<div id="pong-hud">Move side to side to control your paddle</div>
-		<div id="bounce-hud">Hits: 0 — intercept the ball before it passes you</div>
 
 		<div id="ar-overlay">
+			<div id="bounce-hud">Hits: 0</div>
 			<div id="world-builder-controls" aria-label="World Builder spawn controls">
 				<span class="control-label">Spawn</span>
 				<button class="spawn-type-button active" type="button" data-spawn-type="tree">Tree</button>
@@ -3063,7 +3063,9 @@
 					let pendingXRPick = null;
 					let xrSession = null;
 					let roomBallMesh = null;
+					let ballReturningToPlayer = false;
 					const roomBallDisposables = [];
+					const ROOM_HIT_RADIUS = 0.55;
 
 					const ballPos = new THREE.Vector3();
 					const ballVel = new THREE.Vector3();
@@ -3095,12 +3097,8 @@
 					const bounceControls = document.getElementById( 'bounce-controls' );
 					const bounceSound = new Audio( 'sounds/bounce.mp3' );
 					bounceSound.preload = 'auto';
-					const selectedWallMaterial = new THREE.MeshPhongMaterial( {
-						color: 0x22c55e,
-						emissive: 0x14532d,
-						transparent: true,
-						opacity: 0.85
-					} );
+					let serveWallTexture = null;
+					const serveWallTextureLoader = new THREE.TextureLoader();
 
 					function preventOverlaySelect( event ) {
 
@@ -3134,14 +3132,16 @@
 
 					function updateHud() {
 
+						if ( ! bounceHud ) return;
+
 						if ( roomBounds && phase === 'select_wall' ) {
 
-							bounceHud.textContent = 'Choose a wall to serve against, then rally. (Tap a room wall to select.)';
+							bounceHud.textContent = 'Tap a room wall to choose your serve target';
 							return;
 
 						}
 
-						bounceHud.textContent = 'Hits: ' + contactCount + ' — move to intercept the ball (green wall is the target)';
+						bounceHud.textContent = 'Hits: ' + contactCount;
 
 					}
 
@@ -3160,6 +3160,48 @@
 
 					}
 
+					function disposeServeWallMaterial( mesh ) {
+
+						if ( mesh.userData._serveWallMaterial ) {
+
+							mesh.userData._serveWallMaterial.dispose();
+							delete mesh.userData._serveWallMaterial;
+
+						}
+
+					}
+
+					function ensureServeWallTexture() {
+
+						if ( serveWallTexture ) return;
+
+						serveWallTexture = serveWallTextureLoader.load( 'textures/wall.jpg' );
+						serveWallTexture.colorSpace = THREE.SRGBColorSpace;
+						serveWallTexture.wrapS = THREE.ClampToEdgeWrapping;
+						serveWallTexture.wrapT = THREE.ClampToEdgeWrapping;
+						serveWallTexture.minFilter = THREE.LinearFilter;
+						serveWallTexture.magFilter = THREE.LinearFilter;
+
+					}
+
+					function applyServeWallTexture( wall ) {
+
+						ensureServeWallTexture();
+
+						// Stretch one image across the wall face (length × height from room-scale geometry).
+						serveWallTexture.repeat.set( 1, 1 );
+						serveWallTexture.offset.set( 0, 0 );
+						serveWallTexture.needsUpdate = true;
+
+						const texturedMaterial = new THREE.MeshPhongMaterial( {
+							map: serveWallTexture
+						} );
+
+						wall.mesh.material = texturedMaterial;
+						wall.mesh.userData._serveWallMaterial = texturedMaterial;
+
+					}
+
 					function restoreRoomWallMaterials() {
 
 						if ( ! roomBounds || ! roomBounds.walls ) return;
@@ -3167,7 +3209,14 @@
 						for ( const wall of roomBounds.walls ) {
 
 							if ( ! wall.mesh ) continue;
-							if ( wall.mesh.userData._origMaterial ) wall.mesh.material = wall.mesh.userData._origMaterial;
+
+							disposeServeWallMaterial( wall.mesh );
+
+							if ( wall.mesh.userData._origMaterial ) {
+
+								wall.mesh.material = wall.mesh.userData._origMaterial;
+
+							}
 
 						}
 
@@ -3184,8 +3233,8 @@
 						}
 
 						restoreRoomWallMaterials();
+						applyServeWallTexture( wall );
 
-						wall.mesh.material = selectedWallMaterial;
 						selectedRoomWallIndex = wall.index;
 						selectedRoomWall = wall;
 						phase = 'playing';
@@ -3364,6 +3413,8 @@
 						ballVel.copy( desiredDir ).multiplyScalar( ballSpeed );
 						serveCooldown = 0.25;
 						awaitingPlayerHit = false;
+						ballReturningToPlayer = false;
+						updateHud();
 
 					}
 
@@ -3384,6 +3435,13 @@
 								playBounceSound();
 								ballPos.addScaledVector( tmpNormal, BALL_RADIUS - d );
 								ballVel.addScaledVector( tmpNormal, - 2 * vn );
+								normalizeBallSpeed();
+
+								if ( selectedRoomWall && wall.index === selectedRoomWall.index ) {
+
+									ballReturningToPlayer = true;
+
+								}
 
 							}
 
@@ -3417,21 +3475,22 @@
 
 					function tryPlayerHitInRoom() {
 
-						if ( ! roomBounds || ! selectedRoomWall ) return false;
+						if ( ! roomBounds || ! selectedRoomWall || ! ballReturningToPlayer ) return false;
 
 						const viewCamera = getViewCamera();
 						viewCamera.getWorldPosition( playerWorld );
 						playerWorld.y = THREE.MathUtils.clamp( playerWorld.y, roomBounds.floorY + 0.2, roomBounds.floorY + roomBounds.wallHeight - 0.2 );
 
-						ballToPlayer.copy( ballPos ).sub( playerWorld );
-						const distSq = ballToPlayer.lengthSq();
-						if ( distSq > HIT_RADIUS * HIT_RADIUS ) return false;
+						ballToPlayer.copy( playerWorld ).sub( ballPos );
+						const distSq = ballPos.distanceToSquared( playerWorld );
+						if ( distSq > ROOM_HIT_RADIUS * ROOM_HIT_RADIUS ) return false;
 
-						// Only count a hit if the ball is moving toward the player.
-						if ( ballVel.dot( ballToPlayer ) >= 0 ) return false;
+						// Ball must be moving toward the player (after serve-wall bounce).
+						if ( ballVel.dot( ballToPlayer ) <= 0 ) return false;
 
 						playBounceSound();
 						contactCount ++;
+						ballReturningToPlayer = false;
 						updateHud();
 
 						// Send ball toward selected wall, with some control based on relative offset.
@@ -3669,6 +3728,14 @@
 							disposeRoomBall();
 							courtSpawned = false;
 							restoreRoomWallMaterials();
+
+							if ( serveWallTexture ) {
+
+								serveWallTexture.dispose();
+								serveWallTexture = null;
+
+							}
+
 							bounceSound.pause();
 							bounceSound.currentTime = 0;
 
@@ -3746,6 +3813,8 @@
 										tryPlayerHitInRoom();
 
 									}
+
+									updateHud();
 
 									if ( ! roomBallMesh ) {
 
