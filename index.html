@@ -101,9 +101,34 @@
 				color: rgba(255, 255, 255, 0.75);
 			}
 
-			#room-scale-preset-name,
-			#room-scale-preset-select {
+			#room-scale-preset-list {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
 				width: 100%;
+			}
+
+			.room-scale-preset-empty {
+				margin: 0;
+				padding: 10px 12px;
+				font-family: system-ui, sans-serif;
+				font-size: 14px;
+				font-weight: 600;
+				color: rgba(255, 255, 255, 0.65);
+				text-align: center;
+			}
+
+			.room-scale-preset-row {
+				display: flex;
+				gap: 8px;
+				align-items: stretch;
+				width: 100%;
+			}
+
+			.room-scale-preset-label,
+			#room-scale-preset-name {
+				flex: 1;
+				min-width: 0;
 				padding: 12px 14px;
 				font-family: system-ui, sans-serif;
 				font-size: 15px;
@@ -115,19 +140,17 @@
 				box-sizing: border-box;
 			}
 
-			#room-scale-preset-select {
-				appearance: none;
-				cursor: pointer;
-			}
-
-			#room-scale-persistence-row {
+			.room-scale-preset-label {
 				display: flex;
-				gap: 10px;
-				width: 100%;
+				align-items: center;
+				overflow: hidden;
+				text-overflow: ellipsis;
+				white-space: nowrap;
 			}
 
-			#room-scale-persistence button {
-				flex: 1;
+			.room-scale-preset-row button {
+				flex: 0 0 auto;
+				min-width: 72px;
 				padding: 14px 12px;
 				font-family: system-ui, sans-serif;
 				font-size: 13px;
@@ -951,7 +974,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 18:35</div>
+		<div id="version">version: 18:37</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -969,17 +992,11 @@
 			<div id="home-actions">
 				<button id="setup-room-scale-btn" type="button">Setup room scale</button>
 				<div id="room-scale-persistence" class="hidden" aria-label="Room scale storage">
-					<label for="room-scale-preset-name">Preset name</label>
-					<input id="room-scale-preset-name" type="text" maxlength="64" placeholder="e.g. room1, outside, hall" autocomplete="off" spellcheck="false" />
-					<div id="room-scale-persistence-row">
-						<button id="save-room-scale-btn" type="button" disabled>Save room scale</button>
-					</div>
-					<label for="room-scale-preset-select">Saved presets</label>
-					<select id="room-scale-preset-select" aria-label="Choose room scale preset" disabled>
-						<option value="">No saved presets</option>
-					</select>
-					<div id="room-scale-persistence-row">
-						<button id="load-room-scale-btn" type="button" disabled>Load room scale</button>
+					<label>Room scale presets</label>
+					<div id="room-scale-preset-list"></div>
+					<div id="room-scale-new-preset" class="room-scale-preset-row">
+						<input id="room-scale-preset-name" type="text" maxlength="64" placeholder="New preset name" autocomplete="off" spellcheck="false" aria-label="New room scale preset name" />
+						<button id="room-scale-new-preset-save" type="button" disabled>Save</button>
 					</div>
 				</div>
 			</div>
@@ -1664,68 +1681,96 @@
 
 			}
 
-			function updateRoomScalePresetSelect( select, { preferredName = null } = {} ) {
+			function createRoomScalePresetRow( presetName, { hasCurrentBounds } ) {
 
-				if ( ! select ) return;
+				const row = document.createElement( 'div' );
+				row.className = 'room-scale-preset-row';
+				row.dataset.preset = presetName;
+
+				const label = document.createElement( 'span' );
+				label.className = 'room-scale-preset-label';
+				label.textContent = presetName;
+				label.title = presetName;
+
+				const loadBtn = document.createElement( 'button' );
+				loadBtn.type = 'button';
+				loadBtn.className = 'room-scale-preset-load-btn';
+				loadBtn.textContent = 'Load';
+				loadBtn.dataset.preset = presetName;
+				loadBtn.setAttribute( 'aria-label', 'Load room scale preset ' + presetName );
+
+				const saveBtn = document.createElement( 'button' );
+				saveBtn.type = 'button';
+				saveBtn.className = 'room-scale-preset-save-btn';
+				saveBtn.textContent = 'Save';
+				saveBtn.dataset.preset = presetName;
+				saveBtn.disabled = ! hasCurrentBounds;
+				saveBtn.setAttribute( 'aria-label', 'Save room scale to preset ' + presetName );
+
+				row.append( label, loadBtn, saveBtn );
+
+				return row;
+
+			}
+
+			function renderRoomScalePresetList() {
+
+				const list = document.getElementById( 'room-scale-preset-list' );
+				if ( ! list ) return;
 
 				const presetNames = getRoomScalePresetNames();
-				const storage = readRoomScaleStorage();
-				const currentValue = select.value;
-				let selectedName = preferredName || currentValue || storage.lastPreset || '';
+				const hasCurrentBounds = !! savedRoomBounds;
 
-				if ( selectedName && ! presetNames.includes( selectedName ) ) selectedName = presetNames[ 0 ] || '';
-
-				select.replaceChildren();
+				list.replaceChildren();
 
 				if ( presetNames.length === 0 ) {
 
-					const emptyOption = document.createElement( 'option' );
-					emptyOption.value = '';
-					emptyOption.textContent = 'No saved presets';
-					select.appendChild( emptyOption );
-					select.value = '';
-					select.disabled = true;
+					const empty = document.createElement( 'p' );
+					empty.className = 'room-scale-preset-empty';
+					empty.textContent = 'No saved presets yet';
+					list.appendChild( empty );
 					return;
 
 				}
 
 				for ( const presetName of presetNames ) {
 
-					const option = document.createElement( 'option' );
-					option.value = presetName;
-					option.textContent = presetName;
-					select.appendChild( option );
+					list.appendChild( createRoomScalePresetRow( presetName, { hasCurrentBounds } ) );
 
 				}
 
-				select.value = selectedName || presetNames[ 0 ];
-				select.disabled = false;
+			}
+
+			function flashRoomScaleButton( button, label, duration = 1200 ) {
+
+				const originalLabel = button.textContent;
+				button.textContent = label;
+				window.setTimeout( () => {
+
+					button.textContent = originalLabel;
+
+				}, duration );
 
 			}
 
 			function updateRoomScalePersistenceUI() {
 
 				const container = document.getElementById( 'room-scale-persistence' );
-				const saveBtn = document.getElementById( 'save-room-scale-btn' );
-				const loadBtn = document.getElementById( 'load-room-scale-btn' );
+				const newPresetSaveBtn = document.getElementById( 'room-scale-new-preset-save' );
 				const nameInput = document.getElementById( 'room-scale-preset-name' );
-				const presetSelect = document.getElementById( 'room-scale-preset-select' );
-				if ( ! container || ! saveBtn || ! loadBtn ) return;
+				if ( ! container ) return;
 
 				const hasCurrentBounds = !! savedRoomBounds;
 				const hasStoredBounds = hasPersistedRoomScale();
 				const showPersistence = hasCurrentBounds || hasStoredBounds;
+				const newPresetName = normalizeRoomScalePresetName( nameInput ? nameInput.value : '' );
 
 				container.classList.toggle( 'visible', showPersistence );
 				container.classList.toggle( 'hidden', ! showPersistence );
 
-				updateRoomScalePresetSelect( presetSelect );
+				renderRoomScalePresetList();
 
-				const presetName = normalizeRoomScalePresetName( nameInput ? nameInput.value : '' );
-				const selectedPreset = presetSelect ? presetSelect.value : '';
-
-				saveBtn.disabled = ! hasCurrentBounds || ! presetName;
-				loadBtn.disabled = ! selectedPreset;
+				if ( newPresetSaveBtn ) newPresetSaveBtn.disabled = ! hasCurrentBounds || ! newPresetName;
 
 			}
 
@@ -1775,10 +1820,9 @@
 
 				}
 
-				const saveRoomScaleBtn = document.getElementById( 'save-room-scale-btn' );
-				const loadRoomScaleBtn = document.getElementById( 'load-room-scale-btn' );
+				const roomScalePersistence = document.getElementById( 'room-scale-persistence' );
 				const roomScalePresetNameInput = document.getElementById( 'room-scale-preset-name' );
-				const roomScalePresetSelect = document.getElementById( 'room-scale-preset-select' );
+				const roomScaleNewPresetSaveBtn = document.getElementById( 'room-scale-new-preset-save' );
 
 				if ( roomScalePresetNameInput ) {
 
@@ -1790,57 +1834,50 @@
 
 				}
 
-				if ( roomScalePresetSelect ) {
+				if ( roomScalePersistence ) {
 
-					roomScalePresetSelect.addEventListener( 'change', () => {
+					roomScalePersistence.addEventListener( 'click', ( event ) => {
 
-						updateRoomScalePersistenceUI();
+						const loadBtn = event.target.closest( '.room-scale-preset-load-btn' );
+						if ( loadBtn ) {
+
+							const presetName = loadBtn.dataset.preset;
+							if ( ! presetName || ! loadRoomScaleFromStorage( presetName ) ) return;
+
+							flashRoomScaleButton( loadBtn, 'Loaded' );
+							updateRoomScalePersistenceUI();
+							return;
+
+						}
+
+						const saveBtn = event.target.closest( '.room-scale-preset-save-btn' );
+						if ( saveBtn ) {
+
+							const presetName = saveBtn.dataset.preset;
+							if ( ! presetName || ! saveRoomScaleToStorage( presetName ) ) return;
+
+							flashRoomScaleButton( saveBtn, 'Saved' );
+							updateRoomScalePersistenceUI();
+							return;
+
+						}
 
 					} );
 
 				}
 
-				if ( saveRoomScaleBtn ) {
+				if ( roomScaleNewPresetSaveBtn ) {
 
-					saveRoomScaleBtn.addEventListener( 'click', () => {
+					roomScaleNewPresetSaveBtn.addEventListener( 'click', () => {
 
 						const presetName = normalizeRoomScalePresetName(
 							roomScalePresetNameInput ? roomScalePresetNameInput.value : ''
 						);
 						if ( ! presetName || ! saveRoomScaleToStorage( presetName ) ) return;
 
-						const originalLabel = saveRoomScaleBtn.textContent;
-						saveRoomScaleBtn.textContent = 'Saved';
-						updateRoomScalePresetSelect( roomScalePresetSelect, { preferredName: presetName } );
-						if ( roomScalePresetSelect ) roomScalePresetSelect.value = presetName;
+						flashRoomScaleButton( roomScaleNewPresetSaveBtn, 'Saved' );
+						if ( roomScalePresetNameInput ) roomScalePresetNameInput.value = '';
 						updateRoomScalePersistenceUI();
-						window.setTimeout( () => {
-
-							saveRoomScaleBtn.textContent = originalLabel;
-
-						}, 1200 );
-
-					} );
-
-				}
-
-				if ( loadRoomScaleBtn ) {
-
-					loadRoomScaleBtn.addEventListener( 'click', () => {
-
-						const presetName = roomScalePresetSelect ? roomScalePresetSelect.value : '';
-						if ( ! presetName || ! loadRoomScaleFromStorage( presetName ) ) return;
-
-						if ( roomScalePresetNameInput ) roomScalePresetNameInput.value = presetName;
-
-						const originalLabel = loadRoomScaleBtn.textContent;
-						loadRoomScaleBtn.textContent = 'Loaded';
-						updateRoomScalePersistenceUI();
-						window.setTimeout( () => {
-
-							loadRoomScaleBtn.textContent = originalLabel;
-
-						}, 1200 );
 
 					} );
 
