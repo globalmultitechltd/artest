@@ -719,12 +719,91 @@
 				background: #fff;
 				border-color: #fff;
 			}
+
+			#platforms-hud {
+				display: none;
+				position: fixed;
+				left: 0;
+				right: 0;
+				top: 110px;
+				z-index: 10001;
+				text-align: center;
+				font-family: system-ui, sans-serif;
+				font-size: 14px;
+				font-weight: 600;
+				color: #fff;
+				text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+				pointer-events: none;
+			}
+
+			#platforms-hud.visible {
+				display: block;
+			}
+
+			.platforms-drive-panel {
+				display: none;
+				position: absolute;
+				bottom: 88px;
+				flex-direction: column;
+				gap: 10px;
+				padding: 10px;
+				pointer-events: auto;
+				touch-action: manipulation;
+				-webkit-user-select: none;
+				user-select: none;
+			}
+
+			.platforms-drive-panel.visible {
+				display: flex;
+			}
+
+			#platforms-drive-left {
+				left: 12px;
+			}
+
+			#platforms-drive-right {
+				right: 12px;
+			}
+
+			#platforms-jump-panel {
+				left: 50%;
+				bottom: 88px;
+				transform: translateX(-50%);
+			}
+
+			.platforms-drive-panel .platforms-drive-button {
+				min-width: 88px;
+				padding: 22px 12px;
+				color: #fff;
+				background: rgba(0, 0, 0, 0.78);
+				border: 1px solid rgba(255, 255, 255, 0.32);
+				border-radius: 14px;
+				font-size: 13px;
+				font-weight: 700;
+				letter-spacing: 0.04em;
+				text-transform: uppercase;
+				box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+			}
+
+			#platforms-jump {
+				min-width: 110px;
+				padding: 22px 20px;
+				color: #fef9c3;
+				border-color: rgba(250, 204, 21, 0.55);
+			}
+
+			.platforms-drive-panel .platforms-drive-button:active,
+			.platforms-drive-panel .platforms-drive-button.pressed {
+				color: #020617;
+				background: #fff;
+				border-color: #fff;
+			}
 		</style>
 	</head>
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 16:47</div>
+		<div id="version">version: 16:59</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -753,6 +832,7 @@
 		<div id="maze-hud">Walk through the maze to the green exit</div>
 		<div id="collect-items-hud">Walk into the yellow coins to collect them</div>
 		<div id="rc-car-hud">Point at the floor to place your RC car</div>
+		<div id="platforms-hud">Jump across platforms to reach the green exit</div>
 
 		<div id="ar-overlay">
 			<div id="bounce-hud">Hits: 0</div>
@@ -795,6 +875,20 @@
 			<div id="rc-car-drive-right" class="rc-car-drive-panel" aria-label="RC car steering">
 				<button id="rc-car-left" class="rc-drive-button" type="button" data-drive="left">Left</button>
 				<button id="rc-car-right" class="rc-drive-button" type="button" data-drive="right">Right</button>
+			</div>
+
+			<div id="platforms-drive-left" class="platforms-drive-panel" aria-label="Platforms movement">
+				<button id="platforms-forward" class="platforms-drive-button" type="button" data-drive="forward">Forward</button>
+				<button id="platforms-back" class="platforms-drive-button" type="button" data-drive="back">Back</button>
+			</div>
+
+			<div id="platforms-drive-right" class="platforms-drive-panel" aria-label="Platforms steering">
+				<button id="platforms-left" class="platforms-drive-button" type="button" data-drive="left">Left</button>
+				<button id="platforms-right" class="platforms-drive-button" type="button" data-drive="right">Right</button>
+			</div>
+
+			<div id="platforms-jump-panel" class="platforms-drive-panel" aria-label="Platforms jump">
+				<button id="platforms-jump" class="platforms-drive-button" type="button" data-drive="jump">Jump</button>
 			</div>
 
 			<div id="room-scale-setup" aria-label="Room scale setup">
@@ -840,6 +934,7 @@
 			let selectedWorldBuilderSpawnType = 'tree';
 			let paintCommands = null;
 			let rcCarDriveInput = null;
+			let platformsDriveInput = null;
 			let selectedRcCarSceneryType = 'tree';
 
 			const miniGames = {};
@@ -931,6 +1026,7 @@
 				registerMiniGame( createPaintGame() );
 				registerMiniGame( createMazeGame() );
 				registerMiniGame( createRcCarGame() );
+				registerMiniGame( createPlatformsGame() );
 				registerMiniGame( createBounceGame() );
 				registerMiniGame( createCollectItemsGame() );
 
@@ -938,6 +1034,7 @@
 				setupPaintControls();
 				setupRcCarControls();
 				setupRcCarSceneryControls();
+				setupPlatformsControls();
 				setupHomeScreen();
 				setupXRSessionHandlers();
 
@@ -1023,6 +1120,104 @@
 				}
 
 				updateButtons();
+
+			}
+
+			function setupPlatformsControls() {
+
+				const moveButtons = document.querySelectorAll( '.platforms-drive-panel .platforms-drive-button[data-drive]:not([data-drive="jump"])' );
+				const jumpButton = document.getElementById( 'platforms-jump' );
+				const heldPointersByButton = new WeakMap();
+
+				function syncMoveState( button, key ) {
+
+					if ( ! platformsDriveInput ) return;
+
+					const heldPointers = heldPointersByButton.get( button );
+					platformsDriveInput[ key ] = heldPointers ? heldPointers.size > 0 : false;
+
+				}
+
+				for ( const button of moveButtons ) {
+
+					const key = button.dataset.drive;
+					const heldPointers = new Set();
+					heldPointersByButton.set( button, heldPointers );
+
+					const press = ( event ) => {
+
+						event.preventDefault();
+						event.stopPropagation();
+						heldPointers.add( event.pointerId );
+
+						if ( heldPointers.size === 1 ) {
+
+							button.setPointerCapture( event.pointerId );
+							button.classList.add( 'pressed' );
+
+						}
+
+						syncMoveState( button, key );
+
+					};
+
+					const release = ( event ) => {
+
+						if ( ! heldPointers.has( event.pointerId ) ) return;
+
+						event.preventDefault();
+						event.stopPropagation();
+						heldPointers.delete( event.pointerId );
+
+						if ( heldPointers.size === 0 ) {
+
+							button.classList.remove( 'pressed' );
+
+							if ( button.hasPointerCapture( event.pointerId ) ) {
+
+								button.releasePointerCapture( event.pointerId );
+
+							}
+
+						}
+
+						syncMoveState( button, key );
+
+					};
+
+					button.addEventListener( 'pointerdown', press );
+					button.addEventListener( 'pointerup', release );
+					button.addEventListener( 'pointercancel', release );
+
+				}
+
+				if ( jumpButton ) {
+
+					const jumpPress = ( event ) => {
+
+						event.preventDefault();
+						event.stopPropagation();
+
+						if ( ! platformsDriveInput ) return;
+
+						jumpButton.classList.add( 'pressed' );
+						platformsDriveInput.jump = true;
+
+					};
+
+					const jumpRelease = ( event ) => {
+
+						event.preventDefault();
+						event.stopPropagation();
+						jumpButton.classList.remove( 'pressed' );
+
+					};
+
+					jumpButton.addEventListener( 'pointerdown', jumpPress );
+					jumpButton.addEventListener( 'pointerup', jumpRelease );
+					jumpButton.addEventListener( 'pointercancel', jumpRelease );
+
+				}
 
 			}
 
@@ -1423,6 +1618,10 @@
 				const rcCarSceneryControls = document.getElementById( 'rc-car-scenery-controls' );
 				const rcCarDriveLeft = document.getElementById( 'rc-car-drive-left' );
 				const rcCarDriveRight = document.getElementById( 'rc-car-drive-right' );
+				const platformsHud = document.getElementById( 'platforms-hud' );
+				const platformsDriveLeft = document.getElementById( 'platforms-drive-left' );
+				const platformsDriveRight = document.getElementById( 'platforms-drive-right' );
+				const platformsJumpPanel = document.getElementById( 'platforms-jump-panel' );
 				const roomScaleSetupEl = document.getElementById( 'room-scale-setup' );
 
 				function showGameOverlayForSelection() {
@@ -1441,6 +1640,11 @@
 					rcCarSceneryControls.classList.toggle( 'visible', isRcCar );
 					rcCarDriveLeft.classList.toggle( 'visible', isRcCar );
 					rcCarDriveRight.classList.toggle( 'visible', isRcCar );
+					const isPlatforms = selectedMiniGameId === 'platforms';
+					platformsHud.classList.toggle( 'visible', isPlatforms );
+					platformsDriveLeft.classList.toggle( 'visible', isPlatforms );
+					platformsDriveRight.classList.toggle( 'visible', isPlatforms );
+					platformsJumpPanel.classList.toggle( 'visible', isPlatforms );
 
 				}
 
@@ -1575,7 +1779,11 @@
 					rcCarSceneryControls.classList.remove( 'visible' );
 					rcCarDriveLeft.classList.remove( 'visible' );
 					rcCarDriveRight.classList.remove( 'visible' );
-					for ( const button of document.querySelectorAll( '.rc-car-drive-panel .rc-drive-button' ) ) {
+					platformsHud.classList.remove( 'visible' );
+					platformsDriveLeft.classList.remove( 'visible' );
+					platformsDriveRight.classList.remove( 'visible' );
+					platformsJumpPanel.classList.remove( 'visible' );
+					for ( const button of document.querySelectorAll( '.rc-car-drive-panel .rc-drive-button, .platforms-drive-panel .platforms-drive-button' ) ) {
 
 						button.classList.remove( 'pressed' );
 
@@ -3770,6 +3978,738 @@
 							}
 
 							updateDriving( delta );
+
+						}
+
+					};
+
+				}
+
+				return { id, label, create };
+
+			}
+
+			function createPlatformsGame() {
+
+				const id = 'platforms';
+				const label = 'Platforms';
+				const MOVE_SPEED = 0.68;
+				const TURN_SPEED = 2.35;
+				const CUBE_HALF = 0.06;
+				const PLATFORM_HALF = 0.24;
+				const PLATFORM_THICKNESS = 0.08;
+				const GRAVITY = 6.8;
+				const JUMP_SPEED = 2.35;
+				const MAX_STEP_UP = 0.34;
+				const MAX_JUMP_GAP = 0.72;
+				const EXIT_RADIUS = 0.22;
+				const PLAY_HALF = 1.05;
+				const HUD_PLAYING = 'Jump across platforms to reach the green exit';
+				const HUD_LEVEL = 'Exit reached! Loading next layout…';
+				const HUD_PLACING = 'Point at the floor to place the play area';
+
+				function buildPlayerCube() {
+
+					const group = new THREE.Group();
+					const disposables = [];
+					const bodyMat = new THREE.MeshPhongMaterial( { color: 0x38bdf8 } );
+					const trimMat = new THREE.MeshPhongMaterial( { color: 0xf0f9ff } );
+					const bodyGeo = new THREE.BoxGeometry( CUBE_HALF * 2, CUBE_HALF * 2, CUBE_HALF * 2 );
+					const body = new THREE.Mesh( bodyGeo, bodyMat );
+					body.position.y = CUBE_HALF;
+					group.add( body );
+
+					const trimGeo = new THREE.BoxGeometry( CUBE_HALF * 1.2, CUBE_HALF * 0.18, CUBE_HALF * 1.2 );
+					const trim = new THREE.Mesh( trimGeo, trimMat );
+					trim.position.y = CUBE_HALF * 2 + CUBE_HALF * 0.09;
+					group.add( trim );
+
+					disposables.push( bodyGeo, trimGeo, bodyMat, trimMat );
+					group.userData.disposables = disposables;
+
+					return group;
+
+				}
+
+				function buildPlatformMesh( kind ) {
+
+					const colors = {
+						start: 0x3b82f6,
+						mid: 0x64748b,
+						exit: 0x22c55e
+					};
+					const emissive = kind === 'exit' ? 0x14532d : 0x000000;
+					const mat = new THREE.MeshPhongMaterial( {
+						color: colors[ kind ] || colors.mid,
+						emissive
+					} );
+					const geo = new THREE.BoxGeometry(
+						PLATFORM_HALF * 2,
+						PLATFORM_THICKNESS,
+						PLATFORM_HALF * 2
+					);
+					const mesh = new THREE.Mesh( geo, mat );
+					mesh.position.y = PLATFORM_THICKNESS / 2;
+
+					return { mesh, disposables: [ geo, mat ] };
+
+				}
+
+				function generateLevelLayout() {
+
+					const platformCount = 3 + Math.floor( Math.random() * 5 );
+					const specs = [];
+					let x = 0;
+					let z = 0;
+					let y = 0;
+					let angle = Math.random() * Math.PI * 2;
+
+					specs.push( { x, z, y, kind: 'start' } );
+
+					for ( let i = 0; i < platformCount; i ++ ) {
+
+						let placed = false;
+
+						for ( let attempt = 0; attempt < 24 && ! placed; attempt ++ ) {
+
+							angle += ( Math.random() - 0.5 ) * 1.1;
+							const dist = 0.42 + Math.random() * ( MAX_JUMP_GAP - 0.42 );
+							const nx = x + Math.cos( angle ) * dist;
+							const nz = z + Math.sin( angle ) * dist;
+
+							if ( Math.abs( nx ) > PLAY_HALF - PLATFORM_HALF || Math.abs( nz ) > PLAY_HALF - PLATFORM_HALF ) continue;
+
+							let blocked = false;
+
+							for ( const other of specs ) {
+
+								const dx = nx - other.x;
+								const dz = nz - other.z;
+
+								if ( dx * dx + dz * dz < 0.28 * 0.28 ) {
+
+									blocked = true;
+									break;
+
+								}
+
+							}
+
+							if ( blocked ) continue;
+
+							const stepUp = 0.1 + Math.random() * ( MAX_STEP_UP - 0.1 );
+							const ny = y + stepUp;
+							x = nx;
+							z = nz;
+							y = ny;
+							specs.push( { x, z, y, kind: 'mid' } );
+							placed = true;
+
+						}
+
+						if ( ! placed ) break;
+
+					}
+
+					let exitPlaced = false;
+
+					for ( let attempt = 0; attempt < 30 && ! exitPlaced; attempt ++ ) {
+
+						angle += ( Math.random() - 0.5 ) * 1.2;
+						const dist = 0.42 + Math.random() * ( MAX_JUMP_GAP - 0.42 );
+						const nx = x + Math.cos( angle ) * dist;
+						const nz = z + Math.sin( angle ) * dist;
+
+						if ( Math.abs( nx ) > PLAY_HALF - PLATFORM_HALF || Math.abs( nz ) > PLAY_HALF - PLATFORM_HALF ) continue;
+
+						let blocked = false;
+
+						for ( const other of specs ) {
+
+							const dx = nx - other.x;
+							const dz = nz - other.z;
+
+							if ( dx * dx + dz * dz < 0.3 * 0.3 ) {
+
+								blocked = true;
+								break;
+
+							}
+
+						}
+
+						if ( blocked ) continue;
+
+						const stepUp = 0.08 + Math.random() * ( MAX_STEP_UP - 0.08 );
+						specs.push( { x: nx, z: nz, y: y + stepUp, kind: 'exit' } );
+						exitPlaced = true;
+
+					}
+
+					if ( ! exitPlaced ) {
+
+						specs.push( { x: x + 0.5, z, y: Math.min( y + 0.18, MAX_STEP_UP * platformCount ), kind: 'exit' } );
+
+					}
+
+					return specs;
+
+				}
+
+				function create( { scene, renderer, camera, roomBounds } ) {
+
+					let hitTestSource = null;
+					let hitTestSourceRequested = false;
+					let levelGroup = null;
+					let cubeGroup = null;
+					let levelSpawned = false;
+					let sessionStartTime = 0;
+					let lastFrameTime = 0;
+					let hasHitPose = false;
+					let baseFloorY = 0;
+					let levelIndex = 0;
+					let verticalVelocity = 0;
+					let grounded = true;
+					let levelTransitionUntil = 0;
+					const platformSpecs = [];
+					const platformMeshes = [];
+
+					const platformsHud = document.getElementById( 'platforms-hud' );
+					const bounceSound = new Audio( 'sounds/bounce.mp3' );
+					bounceSound.preload = 'auto';
+					bounceSound.volume = 0.7;
+
+					const hitPos = new THREE.Vector3();
+					const hitQuat = new THREE.Quaternion();
+					const hitScale = new THREE.Vector3();
+					const camPos = new THREE.Vector3();
+					const toPlayer = new THREE.Vector3();
+					const forward = new THREE.Vector3();
+					const up = new THREE.Vector3( 0, 1, 0 );
+					const extraRot = new THREE.Quaternion();
+					const spawnMatrix = new THREE.Matrix4();
+					const lastValidPos = new THREE.Vector3();
+					const moveDelta = new THREE.Vector3();
+					const testPos = new THREE.Vector3();
+					const exitWorld = new THREE.Vector3();
+					const localTest = new THREE.Vector2();
+
+					function getViewCamera() {
+
+						if ( renderer.xr.isPresenting ) {
+
+							const xrCamera = renderer.xr.getCamera();
+
+							if ( xrCamera.cameras && xrCamera.cameras.length > 0 ) {
+
+								const eye = xrCamera.cameras[ 0 ];
+								eye.updateMatrixWorld( true );
+								return eye;
+
+							}
+
+							xrCamera.updateMatrixWorld( true );
+							return xrCamera;
+
+						}
+
+						camera.updateMatrixWorld( true );
+						return camera;
+
+					}
+
+					function playJumpSound() {
+
+						const hit = bounceSound.cloneNode();
+						hit.volume = 0.7;
+						hit.play().catch( () => {} );
+
+					}
+
+					function disposeLevel() {
+
+						if ( levelGroup ) {
+
+							scene.remove( levelGroup );
+
+							for ( const disposable of levelGroup.userData.disposables || [] ) {
+
+								disposable.dispose();
+
+							}
+
+							levelGroup = null;
+
+						}
+
+						platformSpecs.length = 0;
+						platformMeshes.length = 0;
+
+					}
+
+					function disposeCube() {
+
+						if ( ! cubeGroup ) return;
+
+						scene.remove( cubeGroup );
+
+						for ( const disposable of cubeGroup.userData.disposables || [] ) {
+
+							disposable.dispose();
+
+						}
+
+						cubeGroup = null;
+
+					}
+
+					function updateHitPoseFromResults( hitTestResults, referenceSpace ) {
+
+						if ( hitTestResults.length === 0 ) {
+
+							hasHitPose = false;
+							return;
+
+						}
+
+						spawnMatrix.fromArray( hitTestResults[ 0 ].getPose( referenceSpace ).transform.matrix );
+						hasHitPose = true;
+
+					}
+
+					function orientCubeTowardPlayer() {
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( camPos );
+						toPlayer.copy( camPos ).sub( hitPos ).setY( 0 );
+
+						if ( toPlayer.lengthSq() < 1e-6 ) return;
+
+						toPlayer.normalize();
+						const yaw = Math.atan2( toPlayer.x, toPlayer.z );
+						extraRot.setFromAxisAngle( up, yaw );
+						cubeGroup.quaternion.copy( hitQuat ).multiply( extraRot );
+
+					}
+
+					function getSpecSurfaceY( spec ) {
+
+						if ( ! levelGroup ) return baseFloorY;
+
+						levelGroup.updateMatrixWorld( true );
+						const scale = levelGroup.scale.x;
+						return levelGroup.position.y + spec.y * scale + PLATFORM_THICKNESS * scale;
+
+					}
+
+					function findSupportingSurface( worldX, worldZ, referenceY ) {
+
+						let bestY = baseFloorY;
+						let onExit = false;
+						const scale = levelGroup ? levelGroup.scale.x : 1;
+						const scaledHalf = PLATFORM_HALF * scale;
+						const localX = ( worldX - levelGroup.position.x ) / scale;
+						const localZ = ( worldZ - levelGroup.position.z ) / scale;
+
+						if ( Math.abs( localX ) <= PLAY_HALF && Math.abs( localZ ) <= PLAY_HALF ) {
+
+							bestY = baseFloorY;
+
+						}
+
+						for ( let i = 0; i < platformSpecs.length; i ++ ) {
+
+							const spec = platformSpecs[ i ];
+							const topY = getSpecSurfaceY( spec );
+							const px = worldX - ( levelGroup.position.x + spec.x * scale );
+							const pz = worldZ - ( levelGroup.position.z + spec.z * scale );
+
+							if ( Math.abs( px ) > scaledHalf || Math.abs( pz ) > scaledHalf ) continue;
+
+							if ( topY > bestY && referenceY >= topY - 0.22 ) {
+
+								bestY = topY;
+								onExit = spec.kind === 'exit';
+
+							}
+
+						}
+
+						return { surfaceY: bestY, onExit };
+
+					}
+
+					function buildLevelFromSpecs( specs ) {
+
+						disposeLevel();
+						levelGroup = new THREE.Group();
+						levelGroup.userData.disposables = [];
+
+						for ( const spec of specs ) {
+
+							const built = buildPlatformMesh( spec.kind );
+							built.mesh.position.set( spec.x, spec.y, spec.z );
+							levelGroup.add( built.mesh );
+							levelGroup.userData.disposables.push( ...built.disposables );
+							platformSpecs.push( spec );
+							platformMeshes.push( built.mesh );
+
+							if ( spec.kind === 'exit' ) {
+
+								const glowGeo = new THREE.CylinderGeometry( 0.1, 0.14, 0.42, 16 );
+								const glowMat = new THREE.MeshPhongMaterial( {
+									color: 0x4ade80,
+									transparent: true,
+									opacity: 0.55,
+									emissive: 0x166534
+								} );
+								const glow = new THREE.Mesh( glowGeo, glowMat );
+								glow.position.set( spec.x, spec.y + PLATFORM_THICKNESS + 0.21, spec.z );
+								levelGroup.add( glow );
+								levelGroup.userData.disposables.push( glowGeo, glowMat );
+
+							}
+
+						}
+
+						scene.add( levelGroup );
+						levelGroup.updateMatrixWorld( true );
+
+					}
+
+					function resetCubeToStart() {
+
+						const startSpec = platformSpecs.find( ( spec ) => spec.kind === 'start' ) || platformSpecs[ 0 ];
+
+						if ( ! startSpec || ! cubeGroup ) return;
+
+						const scale = levelGroup.scale.x;
+						cubeGroup.position.set(
+							levelGroup.position.x + startSpec.x * scale,
+							getSpecSurfaceY( startSpec ) + CUBE_HALF,
+							levelGroup.position.z + startSpec.z * scale
+						);
+						verticalVelocity = 0;
+						grounded = true;
+						lastValidPos.copy( cubeGroup.position );
+
+					}
+
+					function spawnLevelAt( matrix ) {
+
+						if ( levelSpawned ) return;
+
+						matrix.decompose( hitPos, hitQuat, hitScale );
+						baseFloorY = roomBounds ? roomBounds.floorY : hitPos.y;
+
+						const specs = generateLevelLayout();
+						buildLevelFromSpecs( specs );
+
+						levelGroup.position.copy( hitPos );
+						levelGroup.quaternion.copy( hitQuat );
+
+						if ( roomBounds ) {
+
+							levelGroup.position.y = roomBounds.floorY;
+							const fitScale = roomBounds.getFitScale( PLAY_HALF * 2, PLAY_HALF * 2, 0.72 );
+							levelGroup.scale.setScalar( fitScale );
+
+						}
+
+						levelGroup.updateMatrixWorld( true );
+
+						cubeGroup = buildPlayerCube();
+						cubeGroup.quaternion.copy( hitQuat );
+						orientCubeTowardPlayer();
+						scene.add( cubeGroup );
+						resetCubeToStart();
+						levelSpawned = true;
+						levelIndex = 1;
+						platformsHud.textContent = HUD_PLAYING + ' · Level ' + levelIndex;
+
+					}
+
+					function spawnLevelInRoom( bounds ) {
+
+						const point = bounds.getRandomFloorPoint();
+						hitPos.copy( point );
+						hitQuat.copy( bounds.quaternion );
+						hitScale.set( 1, 1, 1 );
+						spawnMatrix.compose( hitPos, hitQuat, hitScale );
+						spawnLevelAt( spawnMatrix );
+
+					}
+
+					function spawnLevelInFrontOfCamera() {
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( camPos );
+						viewCamera.getWorldDirection( forward );
+						forward.y = 0;
+
+						if ( forward.lengthSq() < 1e-6 ) forward.set( 0, 0, - 1 );
+						else forward.normalize();
+
+						hitPos.copy( camPos ).addScaledVector( forward, 1.1 );
+						hitPos.y = camPos.y - 1.35;
+						hitQuat.setFromAxisAngle( up, Math.atan2( forward.x, forward.z ) );
+						hitScale.set( 1, 1, 1 );
+						spawnMatrix.compose( hitPos, hitQuat, hitScale );
+						spawnLevelAt( spawnMatrix );
+
+					}
+
+					function regenerateLevel() {
+
+						const prevPosition = levelGroup.position.clone();
+						const prevQuaternion = levelGroup.quaternion.clone();
+						const prevScale = levelGroup.scale.clone();
+
+						levelTransitionUntil = performance.now() + 700;
+						platformsHud.textContent = HUD_LEVEL;
+						disposeLevel();
+
+						const specs = generateLevelLayout();
+						buildLevelFromSpecs( specs );
+
+						levelGroup.position.copy( prevPosition );
+						levelGroup.quaternion.copy( prevQuaternion );
+						levelGroup.scale.copy( prevScale );
+						levelGroup.updateMatrixWorld( true );
+						levelIndex += 1;
+						resetCubeToStart();
+						platformsHud.textContent = HUD_PLAYING + ' · Level ' + levelIndex;
+
+					}
+
+					function tryJump() {
+
+						if ( ! grounded || ! cubeGroup || levelTransitionUntil > performance.now() ) return;
+
+						verticalVelocity = JUMP_SPEED;
+						grounded = false;
+						playJumpSound();
+
+					}
+
+					function updateCube( delta ) {
+
+						if ( ! levelSpawned || ! cubeGroup || ! platformsDriveInput || levelTransitionUntil > performance.now() ) return;
+
+						if ( platformsDriveInput.jump ) {
+
+							tryJump();
+							platformsDriveInput.jump = false;
+
+						}
+
+						let turn = 0;
+
+						if ( platformsDriveInput.left ) turn += 1;
+						if ( platformsDriveInput.right ) turn -= 1;
+
+						if ( turn !== 0 ) {
+
+							cubeGroup.rotation.y += turn * TURN_SPEED * delta;
+
+						}
+
+						let move = 0;
+
+						if ( platformsDriveInput.forward ) move += 1;
+						if ( platformsDriveInput.back ) move -= 1;
+
+						if ( move !== 0 ) {
+
+							forward.set( 0, 0, - 1 ).applyQuaternion( cubeGroup.quaternion );
+							forward.y = 0;
+
+							if ( forward.lengthSq() < 1e-6 ) forward.set( 0, 0, - 1 );
+							else forward.normalize();
+
+							moveDelta.copy( forward ).multiplyScalar( move * MOVE_SPEED * delta );
+							testPos.copy( cubeGroup.position ).add( moveDelta );
+
+						} else {
+
+							testPos.copy( cubeGroup.position );
+
+						}
+
+						if ( roomBounds && ! roomBounds.containsPoint( testPos ) ) {
+
+							testPos.copy( lastValidPos );
+
+						}
+
+						const support = findSupportingSurface(
+							testPos.x,
+							testPos.z,
+							cubeGroup.position.y - CUBE_HALF
+						);
+						const targetSurface = support.surfaceY + CUBE_HALF;
+
+						verticalVelocity -= GRAVITY * delta;
+						testPos.y = cubeGroup.position.y + verticalVelocity * delta;
+
+						if ( testPos.y <= targetSurface && verticalVelocity <= 0 ) {
+
+							testPos.y = targetSurface;
+							verticalVelocity = 0;
+							grounded = true;
+
+							if ( support.onExit ) {
+
+								const exitSpec = platformSpecs.find( ( spec ) => spec.kind === 'exit' );
+
+								if ( exitSpec ) {
+
+									const scale = levelGroup.scale.x;
+									exitWorld.set(
+										levelGroup.position.x + exitSpec.x * scale,
+										0,
+										levelGroup.position.z + exitSpec.z * scale
+									);
+									localTest.set( testPos.x - exitWorld.x, testPos.z - exitWorld.z );
+
+									if ( localTest.length() < EXIT_RADIUS * scale ) {
+
+										regenerateLevel();
+										return;
+
+									}
+
+								}
+
+							}
+
+						} else {
+
+							grounded = false;
+
+						}
+
+						if ( testPos.y < baseFloorY + CUBE_HALF - 0.15 ) {
+
+							resetCubeToStart();
+							return;
+
+						}
+
+						cubeGroup.position.copy( testPos );
+						lastValidPos.copy( testPos );
+
+					}
+
+					return {
+
+						onSessionStart() {
+
+							hitTestSourceRequested = false;
+							hitTestSource = null;
+							levelSpawned = false;
+							hasHitPose = false;
+							sessionStartTime = performance.now();
+							lastFrameTime = sessionStartTime;
+							levelIndex = 0;
+							verticalVelocity = 0;
+							grounded = true;
+							levelTransitionUntil = 0;
+							platformsHud.textContent = HUD_PLACING;
+							platformsDriveInput = {
+								forward: false,
+								back: false,
+								left: false,
+								right: false,
+								jump: false
+							};
+
+						},
+
+						onSessionEnd() {
+
+							if ( hitTestSource ) {
+
+								hitTestSource.cancel();
+								hitTestSource = null;
+
+							}
+
+							hitTestSourceRequested = false;
+							hasHitPose = false;
+							disposeLevel();
+							disposeCube();
+							levelSpawned = false;
+							platformsDriveInput = null;
+
+						},
+
+						onFrame( timestamp, frame ) {
+
+							if ( ! frame ) return;
+
+							const delta = Math.min( ( timestamp - lastFrameTime ) / 1000, 0.05 );
+							lastFrameTime = timestamp;
+
+							const referenceSpace = renderer.xr.getReferenceSpace();
+							const session = renderer.xr.getSession();
+
+							if ( hitTestSourceRequested === false ) {
+
+								session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
+
+									session.requestHitTestSource( { space: viewerSpace } ).then( function ( source ) {
+
+										hitTestSource = source;
+
+									} );
+
+								} );
+
+								session.addEventListener( 'end', function () {
+
+									hitTestSourceRequested = false;
+									hitTestSource = null;
+									hasHitPose = false;
+
+								} );
+
+								hitTestSourceRequested = true;
+
+							}
+
+							let hitTestResults = [];
+
+							if ( hitTestSource ) {
+
+								hitTestResults = frame.getHitTestResults( hitTestSource );
+								updateHitPoseFromResults( hitTestResults, referenceSpace );
+
+							}
+
+							if ( ! levelSpawned ) {
+
+								if ( roomBounds ) {
+
+									spawnLevelInRoom( roomBounds );
+
+								} else if ( hitTestResults.length ) {
+
+									spawnLevelAt( spawnMatrix );
+
+								}
+
+								if ( ! levelSpawned && ! roomBounds && performance.now() - sessionStartTime > 2200 ) {
+
+									spawnLevelInFrontOfCamera();
+
+								}
+
+								return;
+
+							}
+
+							updateCube( delta );
 
 						}
 
