@@ -1486,6 +1486,9 @@
 
 			}
 
+			// Texture spans more world space than the floor polygon so edges stay inside the image.
+			const FLOOR_TEXTURE_OVERSCALE = 1.3;
+
 			function applyStretchedFloorUVs( geometry ) {
 
 				const positions = geometry.attributes.position;
@@ -1507,13 +1510,14 @@
 
 				}
 
-				const spanX = maxX - minX || 1;
-				const spanZ = maxZ - minZ || 1;
+				const centerX = ( minX + maxX ) * 0.5;
+				const centerZ = ( minZ + maxZ ) * 0.5;
+				const worldSpan = Math.max( maxX - minX, maxZ - minZ, 1 ) * FLOOR_TEXTURE_OVERSCALE;
 
 				for ( let i = 0; i < positions.count; i ++ ) {
 
-					uvArray[ i * 2 ] = ( positions.getX( i ) - minX ) / spanX;
-					uvArray[ i * 2 + 1 ] = ( positions.getZ( i ) - minZ ) / spanZ;
+					uvArray[ i * 2 ] = 0.5 + ( positions.getX( i ) - centerX ) / worldSpan;
+					uvArray[ i * 2 + 1 ] = 0.5 + ( positions.getZ( i ) - centerZ ) / worldSpan;
 
 				}
 
