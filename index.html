@@ -878,12 +878,7 @@
 
 			#platforms-move-panel {
 				left: 12px;
-			}
-
-			#platforms-jump-panel {
-				left: 50%;
-				bottom: 88px;
-				transform: translateX(-50%);
+				align-items: center;
 			}
 
 			.platforms-arrow-pad {
@@ -956,7 +951,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 18:24</div>
+		<div id="version">version: 18:35</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1054,16 +1049,13 @@
 				<button id="rc-car-right" class="rc-drive-button" type="button" data-drive="right">Right</button>
 			</div>
 
-			<div id="platforms-move-panel" class="platforms-drive-panel" aria-label="Platforms movement">
+			<div id="platforms-move-panel" class="platforms-drive-panel" aria-label="Platforms controls">
 				<div class="platforms-arrow-pad">
 					<button id="platforms-forward" class="platforms-drive-button platforms-arrow-button" type="button" data-drive="forward" aria-label="Forward">↑</button>
 					<button id="platforms-left" class="platforms-drive-button platforms-arrow-button" type="button" data-drive="left" aria-label="Left">←</button>
 					<button id="platforms-back" class="platforms-drive-button platforms-arrow-button" type="button" data-drive="back" aria-label="Back">↓</button>
 					<button id="platforms-right" class="platforms-drive-button platforms-arrow-button" type="button" data-drive="right" aria-label="Right">→</button>
 				</div>
-			</div>
-
-			<div id="platforms-jump-panel" class="platforms-drive-panel" aria-label="Platforms jump">
 				<button id="platforms-jump" class="platforms-drive-button" type="button" data-drive="jump">Jump</button>
 			</div>
 
@@ -1975,7 +1967,6 @@
 				const rcCarDriveRight = document.getElementById( 'rc-car-drive-right' );
 				const platformsHud = document.getElementById( 'platforms-hud' );
 				const platformsMovePanel = document.getElementById( 'platforms-move-panel' );
-				const platformsJumpPanel = document.getElementById( 'platforms-jump-panel' );
 				const roomScaleSetupEl = document.getElementById( 'room-scale-setup' );
 
 				function showGameOverlayForSelection() {
@@ -2000,7 +1991,6 @@
 					const isPlatforms = selectedMiniGameId === 'platforms';
 					platformsHud.classList.toggle( 'visible', isPlatforms );
 					platformsMovePanel.classList.toggle( 'visible', isPlatforms );
-					platformsJumpPanel.classList.toggle( 'visible', isPlatforms );
 
 				}
 
@@ -2142,7 +2132,6 @@
 					rcCarDriveRight.classList.remove( 'visible' );
 					platformsHud.classList.remove( 'visible' );
 					platformsMovePanel.classList.remove( 'visible' );
-					platformsJumpPanel.classList.remove( 'visible' );
 					for ( const button of document.querySelectorAll( '.rc-car-drive-panel .rc-drive-button, .platforms-drive-panel .platforms-drive-button' ) ) {
 
 						button.classList.remove( 'pressed' );
