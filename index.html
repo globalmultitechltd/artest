@@ -118,6 +118,111 @@
 				cursor: pointer;
 			}
 
+			#room-scale-option {
+				display: flex;
+				align-items: center;
+				gap: 10px;
+				margin-top: 14px;
+				padding-top: 14px;
+				border-top: 1px solid rgba(255, 255, 255, 0.15);
+				font-size: 15px;
+				font-weight: 600;
+				cursor: pointer;
+				pointer-events: auto;
+			}
+
+			#room-scale-checkbox {
+				width: 20px;
+				height: 20px;
+				accent-color: #2563eb;
+				cursor: pointer;
+			}
+
+			#room-scale-setup {
+				display: none;
+				position: absolute;
+				inset: 0;
+				pointer-events: none;
+			}
+
+			#room-scale-setup.visible {
+				display: block;
+			}
+
+			#room-scale-hud {
+				position: absolute;
+				left: 16px;
+				right: 16px;
+				top: 110px;
+				text-align: center;
+				color: #fff;
+				font-size: 14px;
+				font-weight: 600;
+				line-height: 1.45;
+				text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+				pointer-events: none;
+			}
+
+			#room-scale-controls {
+				position: absolute;
+				left: 50%;
+				bottom: 94px;
+				transform: translateX(-50%);
+				display: flex;
+				flex-direction: column;
+				align-items: stretch;
+				gap: 10px;
+				width: min(92vw, 360px);
+				padding: 14px;
+				color: #fff;
+				background: rgba(0, 0, 0, 0.82);
+				border: 1px solid rgba(255, 255, 255, 0.28);
+				border-radius: 14px;
+				box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+				pointer-events: auto;
+				touch-action: manipulation;
+			}
+
+			#room-scale-controls button {
+				padding: 12px 16px;
+				font-size: 15px;
+				font-weight: 700;
+				color: #fff;
+				background: #2563eb;
+				border: 1px solid rgba(255, 255, 255, 0.35);
+				border-radius: 10px;
+			}
+
+			#room-scale-controls button:active {
+				background: #1d4ed8;
+			}
+
+			#room-scale-controls button.hidden {
+				display: none;
+			}
+
+			#room-scale-height-control {
+				display: none;
+				flex-direction: column;
+				gap: 8px;
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			#room-scale-height-control.visible {
+				display: flex;
+			}
+
+			#room-scale-height-control input[type="range"] {
+				width: 100%;
+				accent-color: #38bdf8;
+			}
+
+			#room-scale-height-value {
+				text-align: center;
+				opacity: 0.85;
+			}
+
 			#shooter-hud {
 				display: none;
 				position: fixed;
@@ -360,12 +465,16 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:48</div>
+		<div id="version">version: 15:28</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
 				<label for="mini-game-select">AR mini game</label>
 				<select id="mini-game-select" aria-label="Choose AR mini game"></select>
+				<label id="room-scale-option" for="room-scale-checkbox">
+					<input type="checkbox" id="room-scale-checkbox" />
+					Room scale
+				</label>
 			</div>
 		</div>
 
@@ -395,6 +504,19 @@
 				<button id="paint-new-color-button" class="paint-action-button" type="button">New color</button>
 				<button id="paint-clear-button" class="paint-action-button" type="button">Clear</button>
 			</div>
+
+			<div id="room-scale-setup" aria-label="Room scale setup">
+				<div id="room-scale-hud">Tap floor corners to mark your room perimeter</div>
+				<div id="room-scale-controls">
+					<button id="room-scale-finish-btn" class="hidden" type="button">Finish perimeter</button>
+					<label id="room-scale-height-control" for="room-scale-height">
+						<span>Wall height</span>
+						<input type="range" id="room-scale-height" min="1" max="3.5" step="0.1" value="2.2" />
+						<span id="room-scale-height-value">2.2 m</span>
+					</label>
+					<button id="room-scale-confirm-btn" class="hidden" type="button">Confirm room scale</button>
+				</div>
+			</div>
 		</div>
 
 		<script type="importmap">
@@ -418,7 +540,10 @@
 			const persistentSceneObjects = new Set();
 
 			let activeMiniGame = null;
+			let activeRoomScaleSetup = null;
 			let selectedMiniGameId = 'world-builder';
+			let roomScaleEnabled = false;
+			let savedRoomBounds = null;
 			let selectedWorldBuilderSpawnType = 'tree';
 			let paintCommands = null;
 
@@ -592,6 +717,18 @@
 
 				} );
 
+				const roomScaleCheckbox = document.getElementById( 'room-scale-checkbox' );
+				if ( roomScaleCheckbox ) {
+
+					roomScaleCheckbox.addEventListener( 'change', () => {
+
+						roomScaleEnabled = roomScaleCheckbox.checked;
+						if ( ! roomScaleEnabled ) savedRoomBounds = null;
+
+					} );
+
+				}
+
 				const arButton = document.getElementById( 'ARButton' );
 				if ( arButton ) {
 
@@ -663,6 +800,7 @@
 
 				const homeScreen = document.getElementById( 'home-screen' );
 				const miniGameSelect = document.getElementById( 'mini-game-select' );
+				const roomScaleCheckbox = document.getElementById( 'room-scale-checkbox' );
 				const arOverlay = document.getElementById( 'ar-overlay' );
 				const worldBuilderControls = document.getElementById( 'world-builder-controls' );
 				const paintControls = document.getElementById( 'paint-controls' );
@@ -670,12 +808,10 @@
 				const paintTipDot = document.getElementById( 'paint-tip-dot' );
 				const mazeHud = document.getElementById( 'maze-hud' );
 				const pongHud = document.getElementById( 'pong-hud' );
+				const roomScaleSetupEl = document.getElementById( 'room-scale-setup' );
 
-				renderer.xr.addEventListener( 'sessionstart', () => {
+				function showGameOverlayForSelection() {
 
-					homeScreen.classList.add( 'hidden' );
-					miniGameSelect.disabled = true;
-					arOverlay.classList.add( 'visible' );
 					worldBuilderControls.classList.toggle( 'visible', selectedMiniGameId === 'world-builder' );
 					const isPaint = selectedMiniGameId === 'paint';
 					paintControls.classList.toggle( 'visible', isPaint );
@@ -684,18 +820,88 @@
 					mazeHud.classList.toggle( 'visible', selectedMiniGameId === 'maze' );
 					pongHud.classList.toggle( 'visible', selectedMiniGameId === 'pong' );
 
-					activeMiniGame = miniGames[ selectedMiniGameId ].create( {
+				}
+
+				function startMiniGame( gameContext ) {
+
+					showGameOverlayForSelection();
+					activeMiniGame = miniGames[ selectedMiniGameId ].create( gameContext );
+					activeMiniGame.onSessionStart();
+
+				}
+
+				function beginRoomScaleSetup( gameContext ) {
+
+					roomScaleSetupEl.classList.add( 'visible' );
+					activeRoomScaleSetup = createRoomScaleSetup( {
 						scene,
 						renderer,
 						camera,
 						controller1,
-						controller2
+						controller2,
+						onConfirm( roomBounds ) {
+
+							savedRoomBounds = {
+								vertices: roomBounds.vertices.map( ( vertex ) => vertex.clone() ),
+								wallHeight: roomBounds.wallHeight
+							};
+							gameContext.roomBounds = roomBounds;
+							activeRoomScaleSetup = null;
+							roomScaleSetupEl.classList.remove( 'visible' );
+							startMiniGame( gameContext );
+
+						}
 					} );
-					activeMiniGame.onSessionStart();
+					activeRoomScaleSetup.onSessionStart();
+
+				}
+
+				renderer.xr.addEventListener( 'sessionstart', () => {
+
+					homeScreen.classList.add( 'hidden' );
+					miniGameSelect.disabled = true;
+					if ( roomScaleCheckbox ) roomScaleCheckbox.disabled = true;
+					arOverlay.classList.add( 'visible' );
+
+					const gameContext = {
+						scene,
+						renderer,
+						camera,
+						controller1,
+						controller2,
+						roomBounds: null
+					};
+
+					if ( roomScaleEnabled ) {
+
+						if ( savedRoomBounds ) {
+
+							gameContext.roomBounds = restoreSavedRoomBounds( scene );
+							startMiniGame( gameContext );
+
+						} else {
+
+							beginRoomScaleSetup( gameContext );
+
+						}
+
+					} else {
+
+						startMiniGame( gameContext );
+
+					}
 
 				} );
 
 				renderer.xr.addEventListener( 'sessionend', () => {
+
+					if ( activeRoomScaleSetup ) {
+
+						activeRoomScaleSetup.onSessionEnd();
+						activeRoomScaleSetup = null;
+						roomScaleSetupEl.classList.remove( 'visible' );
+
+					}
 
 					if ( activeMiniGame ) {
 
@@ -716,6 +922,7 @@
 					pongHud.classList.remove( 'visible' );
 					homeScreen.classList.remove( 'hidden' );
 					miniGameSelect.disabled = false;
+					if ( roomScaleCheckbox ) roomScaleCheckbox.disabled = false;
 
 					const arButton = document.getElementById( 'ARButton' );
 					if ( arButton && arButton.textContent === 'START AR' ) {
@@ -850,9 +1057,532 @@
 
 			}
 
+			function buildRoomBoundaryGroup( vertices, wallHeight ) {
+
+				const boundaryGroup = new THREE.Group();
+				const floorY = vertices.reduce( ( sum, vertex ) => sum + vertex.y, 0 ) / vertices.length;
+				const closedPoints = vertices.map( ( vertex ) => new THREE.Vector3( vertex.x, floorY + 0.02, vertex.z ) );
+				const lineGeometry = new THREE.BufferGeometry().setFromPoints( closedPoints );
+				const lineMaterial = new THREE.LineBasicMaterial( { color: 0x38bdf8 } );
+				const perimeterLine = new THREE.LineLoop( lineGeometry, lineMaterial );
+				boundaryGroup.add( perimeterLine );
+
+				const wallMaterial = new THREE.MeshPhongMaterial( {
+					color: 0x64748b,
+					transparent: true,
+					opacity: 0.82
+				} );
+				const wallThickness = 0.06;
+				const edgeDir = new THREE.Vector3();
+				const edgeMid = new THREE.Vector3();
+				const unitX = new THREE.Vector3( 1, 0, 0 );
+				const wallQuat = new THREE.Quaternion();
+				const edgeCount = vertices.length;
+
+				for ( let i = 0; i < edgeCount; i ++ ) {
+
+					const start = vertices[ i ];
+					const end = vertices[ ( i + 1 ) % edgeCount ];
+					edgeDir.subVectors( end, start ).setY( 0 );
+					const length = edgeDir.length();
+
+					if ( length < 1e-4 ) continue;
+
+					edgeDir.normalize();
+					edgeMid.addVectors( start, end ).multiplyScalar( 0.5 );
+					wallQuat.setFromUnitVectors( unitX, edgeDir );
+
+					const wall = new THREE.Mesh(
+						new THREE.BoxGeometry( length, wallHeight, wallThickness ),
+						wallMaterial
+					);
+					wall.position.set( edgeMid.x, floorY + wallHeight / 2, edgeMid.z );
+					wall.quaternion.copy( wallQuat );
+					boundaryGroup.add( wall );
+
+				}
+
+				return boundaryGroup;
+
+			}
+
+			function restoreSavedRoomBounds( scene ) {
+
+				if ( ! savedRoomBounds ) return null;
+
+				const vertices = savedRoomBounds.vertices.map( ( vertex ) => vertex.clone() );
+				const boundaryGroup = buildRoomBoundaryGroup( vertices, savedRoomBounds.wallHeight );
+				scene.add( boundaryGroup );
+
+				return buildRoomBounds( vertices, savedRoomBounds.wallHeight, boundaryGroup );
+
+			}
+
+			function buildRoomBounds( vertices, wallHeight, boundaryGroup ) {
+
+				const floorY = vertices.reduce( ( sum, vertex ) => sum + vertex.y, 0 ) / vertices.length;
+				const center = new THREE.Vector3();
+				const localX = new THREE.Vector3();
+				const localPoint = new THREE.Vector3();
+
+				for ( const vertex of vertices ) {
+
+					center.add( vertex );
+
+				}
+
+				center.divideScalar( vertices.length );
+				center.y = floorY;
+
+				localX.subVectors( vertices[ 1 ], vertices[ 0 ] ).setY( 0 );
+
+				if ( localX.lengthSq() < 1e-6 ) {
+
+					localX.set( 1, 0, 0 );
+
+				} else {
+
+					localX.normalize();
+
+				}
+
+				const quaternion = new THREE.Quaternion().setFromUnitVectors(
+					new THREE.Vector3( 1, 0, 0 ),
+					localX
+				);
+				const inverseQuaternion = quaternion.clone().invert();
+
+				let minX = Infinity;
+				let maxX = - Infinity;
+				let minZ = Infinity;
+				let maxZ = - Infinity;
+
+				for ( const vertex of vertices ) {
+
+					localPoint.copy( vertex ).sub( center ).applyQuaternion( inverseQuaternion );
+					minX = Math.min( minX, localPoint.x );
+					maxX = Math.max( maxX, localPoint.x );
+					minZ = Math.min( minZ, localPoint.z );
+					maxZ = Math.max( maxZ, localPoint.z );
+
+				}
+
+				const clonedVertices = vertices.map( ( vertex ) => vertex.clone() );
+
+				return {
+					vertices: clonedVertices,
+					floorY,
+					center,
+					quaternion,
+					halfExtents: {
+						x: ( maxX - minX ) / 2,
+						z: ( maxZ - minZ ) / 2
+					},
+					wallHeight,
+					boundaryGroup,
+					containsPoint( worldPos ) {
+
+						let inside = false;
+
+						for ( let i = 0, j = clonedVertices.length - 1; i < clonedVertices.length; j = i ++ ) {
+
+							const xi = clonedVertices[ i ].x;
+							const zi = clonedVertices[ i ].z;
+							const xj = clonedVertices[ j ].x;
+							const zj = clonedVertices[ j ].z;
+							const intersects = ( ( zi > worldPos.z ) !== ( zj > worldPos.z ) ) &&
+								( worldPos.x < ( xj - xi ) * ( worldPos.z - zi ) / ( zj - zi ) + xi );
+
+							if ( intersects ) inside = ! inside;
+
+						}
+
+						return inside;
+
+					},
+					getFitScale( contentWidth, contentDepth, margin = 0.88 ) {
+
+						const roomWidth = ( maxX - minX ) || 1;
+						const roomDepth = ( maxZ - minZ ) || 1;
+
+						return margin * Math.min( roomWidth / contentWidth, roomDepth / contentDepth );
+
+					},
+					getSpawnMatrix() {
+
+						const matrix = new THREE.Matrix4();
+						matrix.compose( center, quaternion, new THREE.Vector3( 1, 1, 1 ) );
+						return matrix;
+
+					},
+					getRandomFloorPoint() {
+
+						const width = ( maxX - minX ) || 1;
+						const depth = ( maxZ - minZ ) || 1;
+						const point = new THREE.Vector3();
+
+						for ( let attempt = 0; attempt < 40; attempt ++ ) {
+
+							localPoint.set(
+								minX + Math.random() * width,
+								0,
+								minZ + Math.random() * depth
+							);
+							point.copy( localPoint ).applyQuaternion( quaternion ).add( center );
+							point.y = floorY;
+
+							if ( this.containsPoint( point ) ) return point;
+
+						}
+
+						return center.clone();
+
+					}
+				};
+
+			}
+
+			function createRoomScaleSetup( { scene, renderer, camera, controller1, controller2, onConfirm } ) {
+
+				let hitTestSource = null;
+				let hitTestSourceRequested = false;
+				let phase = 'marking';
+				let wallHeight = 2.2;
+				let reticle = null;
+				let boundaryGroup = null;
+				let perimeterClosed = false;
+
+				const vertices = [];
+				const markerMeshes = [];
+				const hitPos = new THREE.Vector3();
+				const hitQuat = new THREE.Quaternion();
+				const hitScale = new THREE.Vector3();
+				let pendingTap = false;
+
+				const hud = document.getElementById( 'room-scale-hud' );
+				const finishBtn = document.getElementById( 'room-scale-finish-btn' );
+				const confirmBtn = document.getElementById( 'room-scale-confirm-btn' );
+				const heightControl = document.getElementById( 'room-scale-height-control' );
+				const heightSlider = document.getElementById( 'room-scale-height' );
+				const heightValue = document.getElementById( 'room-scale-height-value' );
+				const controlsRoot = document.getElementById( 'room-scale-controls' );
+
+				function updateHud() {
+
+					if ( phase === 'marking' ) {
+
+						if ( vertices.length === 0 ) {
+
+							hud.textContent = 'Tap each floor corner to mark your room perimeter';
+
+						} else {
+
+							hud.textContent = 'Corner ' + vertices.length + ' placed. Add more corners, then finish the perimeter.';
+
+						}
+
+						finishBtn.classList.toggle( 'hidden', vertices.length < 3 );
+						heightControl.classList.remove( 'visible' );
+						confirmBtn.classList.add( 'hidden' );
+
+					} else {
+
+						hud.textContent = 'Adjust wall height, then confirm room scale to start the mini game.';
+						finishBtn.classList.add( 'hidden' );
+						heightControl.classList.add( 'visible' );
+						confirmBtn.classList.remove( 'hidden' );
+
+					}
+
+				}
+
+				function disposeBoundaryGroup() {
+
+					if ( ! boundaryGroup ) return;
+
+					scene.remove( boundaryGroup );
+
+					boundaryGroup.traverse( ( node ) => {
+
+						if ( node.geometry ) node.geometry.dispose();
+
+						if ( node.material ) {
+
+							if ( Array.isArray( node.material ) ) {
+
+								node.material.forEach( ( material ) => material.dispose() );
+
+							} else {
+
+								node.material.dispose();
+
+							}
+
+						}
+
+					} );
+
+					boundaryGroup = null;
+
+				}
+
+				function rebuildBoundaryVisuals() {
+
+					disposeBoundaryGroup();
+					if ( vertices.length < 3 ) return;
+
+					if ( perimeterClosed ) {
+
+						boundaryGroup = buildRoomBoundaryGroup( vertices, wallHeight );
+
+					} else {
+
+						boundaryGroup = new THREE.Group();
+						const floorY = vertices.reduce( ( sum, vertex ) => sum + vertex.y, 0 ) / vertices.length;
+						const linePoints = vertices.map( ( vertex ) => new THREE.Vector3( vertex.x, floorY + 0.02, vertex.z ) );
+						const lineGeometry = new THREE.BufferGeometry().setFromPoints( linePoints );
+						const lineMaterial = new THREE.LineBasicMaterial( { color: 0x38bdf8 } );
+						const perimeterLine = new THREE.Line( lineGeometry, lineMaterial );
+						boundaryGroup.add( perimeterLine );
+
+					}
+
+					scene.add( boundaryGroup );
+
+				}
+
+				function addVertex( matrix ) {
+
+					if ( phase !== 'marking' ) return;
+
+					matrix.decompose( hitPos, hitQuat, hitScale );
+					vertices.push( hitPos.clone() );
+
+					const marker = new THREE.Mesh(
+						new THREE.CylinderGeometry( 0.05, 0.05, 0.03, 16 ),
+						new THREE.MeshPhongMaterial( { color: 0x38bdf8, emissive: 0x0c4a6e } )
+					);
+					marker.position.copy( hitPos );
+					marker.position.y += 0.015;
+					scene.add( marker );
+					markerMeshes.push( marker );
+
+					rebuildBoundaryVisuals();
+					updateHud();
+
+				}
+
+				function closePerimeter() {
+
+					if ( vertices.length < 3 || phase !== 'marking' ) return;
+
+					perimeterClosed = true;
+					phase = 'preview';
+					rebuildBoundaryVisuals();
+					updateHud();
+
+				}
+
+				function onSelect() {
+
+					if ( reticle && reticle.visible && phase === 'marking' ) {
+
+						addVertex( reticle.matrix );
+
+					}
+
+				}
+
+				function onPointerDown( event ) {
+
+					if ( phase !== 'marking' || ! reticle || ! reticle.visible ) return;
+
+					event.preventDefault();
+					pendingTap = true;
+
+				}
+
+				function onFinishClick( event ) {
+
+					event.preventDefault();
+					event.stopPropagation();
+					closePerimeter();
+
+				}
+
+				function onHeightInput() {
+
+					wallHeight = parseFloat( heightSlider.value );
+					heightValue.textContent = wallHeight.toFixed( 1 ) + ' m';
+					rebuildBoundaryVisuals();
+
+				}
+
+				function onConfirmClick( event ) {
+
+					event.preventDefault();
+					event.stopPropagation();
+
+					if ( ! perimeterClosed || vertices.length < 3 ) return;
+
+					const roomBounds = buildRoomBounds( vertices, wallHeight, boundaryGroup );
+					boundaryGroup = null;
+					cleanupSession( { keepBoundary: true } );
+					onConfirm( roomBounds );
+
+				}
+
+				function cleanupSession( { keepBoundary = false } = {} ) {
+
+					controller1.removeEventListener( 'select', onSelect );
+					controller2.removeEventListener( 'select', onSelect );
+					renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
+					finishBtn.removeEventListener( 'click', onFinishClick );
+					confirmBtn.removeEventListener( 'click', onConfirmClick );
+					heightSlider.removeEventListener( 'input', onHeightInput );
+
+					if ( hitTestSource ) {
+
+						hitTestSource.cancel();
+						hitTestSource = null;
+
+					}
+
+					hitTestSourceRequested = false;
+
+					if ( reticle ) {
+
+						scene.remove( reticle );
+						reticle.geometry.dispose();
+						reticle.material.dispose();
+						reticle = null;
+
+					}
+
+					for ( const marker of markerMeshes ) {
+
+						scene.remove( marker );
+						marker.geometry.dispose();
+						marker.material.dispose();
+
+					}
+
+					markerMeshes.length = 0;
+
+					if ( ! keepBoundary && boundaryGroup ) {
+
+						disposeBoundaryGroup();
+
+					}
+
+				}
+
+				reticle = new THREE.Mesh(
+					new THREE.RingGeometry( 0.12, 0.17, 32 ).rotateX( - Math.PI / 2 ),
+					new THREE.MeshBasicMaterial( { color: 0x38bdf8 } )
+				);
+				reticle.matrixAutoUpdate = false;
+				reticle.visible = false;
+
+				return {
+
+					onSessionStart() {
+
+						phase = 'marking';
+						perimeterClosed = false;
+						wallHeight = parseFloat( heightSlider.value );
+						vertices.length = 0;
+						hitTestSourceRequested = false;
+						hitTestSource = null;
+						pendingTap = false;
+
+						scene.add( reticle );
+						controller1.addEventListener( 'select', onSelect );
+						controller2.addEventListener( 'select', onSelect );
+						renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
+						finishBtn.addEventListener( 'click', onFinishClick );
+						confirmBtn.addEventListener( 'click', onConfirmClick );
+						heightSlider.addEventListener( 'input', onHeightInput );
+						controlsRoot.addEventListener( 'beforexrselect', ( event ) => event.preventDefault() );
+
+						heightValue.textContent = wallHeight.toFixed( 1 ) + ' m';
+						updateHud();
+
+					},
+
+					onSessionEnd() {
+
+						cleanupSession();
+
+					},
+
+					onFrame( timestamp, frame ) {
+
+						if ( ! frame ) return;
+
+						const referenceSpace = renderer.xr.getReferenceSpace();
+						const session = renderer.xr.getSession();
+
+						if ( hitTestSourceRequested === false ) {
+
+							session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
+
+								session.requestHitTestSource( { space: viewerSpace } ).then( function ( source ) {
+
+									hitTestSource = source;
+
+								} );
+
+							} );
+
+							session.addEventListener( 'end', function () {
+
+								hitTestSourceRequested = false;
+								hitTestSource = null;
+
+							} );
+
+							hitTestSourceRequested = true;
+
+						}
+
+						if ( hitTestSource && phase === 'marking' ) {
+
+							const hitTestResults = frame.getHitTestResults( hitTestSource );
+
+							if ( hitTestResults.length ) {
+
+								reticle.visible = true;
+								reticle.matrix.fromArray( hitTestResults[ 0 ].getPose( referenceSpace ).transform.matrix );
+
+							} else {
+
+								reticle.visible = false;
+
+							}
+
+						} else if ( reticle ) {
+
+							reticle.visible = false;
+
+						}
+
+						if ( pendingTap && reticle && reticle.visible ) {
+
+							pendingTap = false;
+							addVertex( reticle.matrix );
+
+						}
+
+					}
+
+				};
+
+			}
+
 			function createHitTestPlacementGame( { id, label, createPlacement, uniformScale = false, fixedScale = false, isBlockMode = null } ) {
 
-				function create( { scene, renderer, camera, controller1, controller2 } ) {
+				function create( { scene, renderer, camera, controller1, controller2, roomBounds } ) {
 
 					let reticle;
 					let hitTestSource = null;
@@ -987,9 +1717,12 @@
 
 						if ( reticle.visible ) {
 
+							reticle.matrix.decompose( placementPosition, placementQuaternion, placementScale );
+
+							if ( roomBounds && ! roomBounds.containsPoint( placementPosition ) ) return;
+
 							const object = createPlacement();
 							const baseScale = object.scale.clone();
-							reticle.matrix.decompose( placementPosition, placementQuaternion, placementScale );
 
 							object.position.copy( placementPosition );
 							object.quaternion.copy( placementQuaternion );
@@ -1300,7 +2033,7 @@
 
 				}
 
-				function create( { scene, renderer, camera } ) {
+				function create( { scene, renderer, camera, roomBounds } ) {
 
 					let hitTestSource = null;
 					let hitTestSourceRequested = false;
@@ -1308,6 +2041,8 @@
 					let mazeSpawned = false;
 					let hasWon = false;
 					let sessionStartTime = 0;
+					let mazeFootprintW = 0;
+					let mazeFootprintD = 0;
 
 					const mazeHud = document.getElementById( 'maze-hud' );
 					const hitPos = new THREE.Vector3();
@@ -1392,7 +2127,7 @@
 
 					}
 
-					function spawnMazeAt( matrix ) {
+					function spawnMazeAt( matrix, fitToRoom = null ) {
 
 						if ( mazeSpawned ) return;
 
@@ -1400,6 +2135,16 @@
 
 						const mazeData = generateMazeData( MAZE_PATH_CELLS, MAZE_PATH_CELLS );
 						mazeGroup = buildMazeGroup( mazeData );
+						mazeFootprintW = mazeData.width * CELL_SIZE;
+						mazeFootprintD = mazeData.height * CELL_SIZE;
+
+						if ( fitToRoom ) {
+
+							const scale = fitToRoom.getFitScale( mazeFootprintW, mazeFootprintD );
+							mazeGroup.scale.setScalar( scale );
+
+						}
+
 						mazeGroup.position.copy( hitPos );
 						mazeGroup.quaternion.copy( hitQuat );
 						orientMazeTowardPlayer();
@@ -1409,6 +2154,12 @@
 						mazeSpawned = true;
 						hasWon = false;
 						mazeHud.textContent = MAZE_HUD_PLAYING;
+
+					}
+
+					function spawnMazeInRoom( bounds ) {
+
+						spawnMazeAt( bounds.getSpawnMatrix(), bounds );
 
 					}
 
@@ -1485,7 +2236,11 @@
 
 							if ( ! mazeSpawned ) {
 
-								if ( hitTestSourceRequested === false ) {
+								if ( roomBounds ) {
+
+									spawnMazeInRoom( roomBounds );
+
+								} else if ( hitTestSourceRequested === false ) {
 
 									session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
 
@@ -1521,7 +2276,7 @@
 
 								}
 
-								if ( ! mazeSpawned && performance.now() - sessionStartTime > 2200 ) {
+								if ( ! mazeSpawned && ! roomBounds && performance.now() - sessionStartTime > 2200 ) {
 
 									spawnMazeInFrontOfCamera();
 
@@ -1621,7 +2376,7 @@
 
 				}
 
-				function create( { scene, renderer, camera } ) {
+				function create( { scene, renderer, camera, roomBounds } ) {
 
 					let hitTestSource = null;
 					let hitTestSourceRequested = false;
@@ -1761,12 +2516,20 @@
 
 					}
 
-					function spawnTableAt( matrix ) {
+					function spawnTableAt( matrix, fitToRoom = null ) {
 
 						if ( tableSpawned ) return;
 
 						matrix.decompose( hitPos, hitQuat, hitScale );
 						tableGroup = buildPongTable();
+
+						if ( fitToRoom ) {
+
+							const scale = fitToRoom.getFitScale( TABLE_WIDTH, TABLE_DEPTH, 0.75 );
+							tableGroup.scale.setScalar( scale );
+
+						}
+
 						tableGroup.position.copy( hitPos );
 						tableGroup.quaternion.copy( hitQuat );
 						orientTableTowardPlayer();
@@ -1778,6 +2541,12 @@
 						aiScore = 0;
 						resetBall( Math.random() > 0.5 );
 						updateHud();
+
+					}
+
+					function spawnTableInRoom( bounds ) {
+
+						spawnTableAt( bounds.getSpawnMatrix(), bounds );
 
 					}
 
@@ -1965,7 +2734,11 @@
 
 							if ( ! tableSpawned ) {
 
-								if ( hitTestSourceRequested === false ) {
+								if ( roomBounds ) {
+
+									spawnTableInRoom( roomBounds );
+
+								} else if ( hitTestSourceRequested === false ) {
 
 									session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
 
@@ -2001,7 +2774,7 @@
 
 								}
 
-								if ( ! tableSpawned && performance.now() - sessionStartTime > 2200 ) {
+								if ( ! tableSpawned && ! roomBounds && performance.now() - sessionStartTime > 2200 ) {
 
 									spawnTableInFrontOfCamera();
 
@@ -2074,7 +2847,7 @@
 
 				}
 
-				function create( { scene, renderer, camera } ) {
+				function create( { scene, renderer, camera, roomBounds } ) {
 
 					const enemies = [];
 					const raycaster = new THREE.Raycaster();
@@ -2379,17 +3152,30 @@
 
 						const viewCamera = getViewCamera();
 						const mesh = createRandomEnemyMesh();
-						viewCamera.getWorldDirection( camDir );
-						right.crossVectors( camDir, viewCamera.up ).normalize();
-						up.crossVectors( right, camDir ).normalize();
 
-						const distance = 2.5 + Math.random() * 1.5;
-						const spread = 1.4;
+						if ( roomBounds ) {
 
-						mesh.position.copy( viewCamera.position )
-							.addScaledVector( camDir, distance )
-							.addScaledVector( right, ( Math.random() - 0.5 ) * spread )
-							.addScaledVector( up, ( Math.random() - 0.5 ) * spread * 0.85 );
+							const spawnPoint = roomBounds.getRandomFloorPoint();
+							const minY = roomBounds.floorY + 0.35;
+							const maxY = roomBounds.floorY + Math.min( roomBounds.wallHeight - 0.25, 2.4 );
+							mesh.position.copy( spawnPoint );
+							mesh.position.y = minY + Math.random() * Math.max( 0.2, maxY - minY );
+
+						} else {
+
+							viewCamera.getWorldDirection( camDir );
+							right.crossVectors( camDir, viewCamera.up ).normalize();
+							up.crossVectors( right, camDir ).normalize();
+
+							const distance = 2.5 + Math.random() * 1.5;
+							const spread = 1.4;
+
+							mesh.position.copy( viewCamera.position )
+								.addScaledVector( camDir, distance )
+								.addScaledVector( right, ( Math.random() - 0.5 ) * spread )
+								.addScaledVector( up, ( Math.random() - 0.5 ) * spread * 0.85 );
+
+						}
 
 						mesh.userData.speed = 0.175 + Math.random() * 0.125;
 						scene.add( mesh );
@@ -2545,7 +3331,7 @@
 				const id = 'paint';
 				const label = 'Paint';
 
-				function create( { scene, renderer, camera } ) {
+				function create( { scene, renderer, camera, roomBounds } ) {
 
 					const paintTipDot = document.getElementById( 'paint-tip-dot' );
 
@@ -2648,6 +3434,16 @@
 
 						currentStroke = null;
 						lastHadTip = false;
+
+					}
+
+					function tipIsInsideRoom() {
+
+						if ( ! roomBounds ) return true;
+						if ( ! roomBounds.containsPoint( tipPos ) ) return false;
+						if ( tipPos.y < roomBounds.floorY - 0.05 ) return false;
+						if ( tipPos.y > roomBounds.floorY + roomBounds.wallHeight ) return false;
+						return true;
 
 					}
 
@@ -2782,6 +3578,8 @@
 							viewCamera.getWorldDirection( camDir );
 							tipPos.copy( viewCamera.position ).addScaledVector( camDir, tipOffset );
 
+							if ( ! tipIsInsideRoom() ) return;
+
 							if ( ! lastHadTip ) {
 
 								addJoint( tipPos );
@@ -2821,6 +3619,12 @@
 			//
 
 			function animate( timestamp, frame ) {
+
+				if ( activeRoomScaleSetup ) {
+
+					activeRoomScaleSetup.onFrame( timestamp, frame );
+
+				}
 
 				if ( activeMiniGame ) {
 
