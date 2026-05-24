@@ -5257,10 +5257,10 @@
 					const tipRadius = 0.012;
 					const minSegmentLength = 0.012;
 
-					let xrSession = null;
 					let isPenDown = false;
 					let pendingPenDown = false;
 					let pendingPenUp = false;
+					let activePointerId = null;
 					let currentStroke = null;
 					let currentColorHex = 0xff5b8a;
 					let lastHadTip = false;
@@ -5377,26 +5377,35 @@
 
 					function onPointerDown( event ) {
 
+						if ( activePointerId !== null ) return;
+
 						event.preventDefault();
+						activePointerId = event.pointerId;
+						renderer.domElement.setPointerCapture( event.pointerId );
 						pendingPenDown = true;
 
 					}
 
-					function onPointerEnd() {
+					function onPointerEnd( event ) {
 
+						if ( event.pointerId !== activePointerId ) return;
+
+						event.preventDefault();
+						if ( renderer.domElement.hasPointerCapture( event.pointerId ) ) {
+
+							renderer.domElement.releasePointerCapture( event.pointerId );
+
+						}
+
+						activePointerId = null;
 						pendingPenUp = true;
 
 					}
 
-					function onXRSelectStart() {
+					function onPointerMove( event ) {
 
-						pendingPenDown = true;
-
-					}
-
-					function onXRSelectEnd() {
-
-						pendingPenUp = true;
+						if ( event.pointerId !== activePointerId ) return;
+						event.preventDefault();
 
 					}
 
@@ -5407,16 +5416,9 @@
 							pickNewColorHex();
 							renderer.domElement.style.touchAction = 'none';
 							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
-							window.addEventListener( 'pointerup', onPointerEnd );
-							window.addEventListener( 'pointercancel', onPointerEnd );
-
-							xrSession = renderer.xr.getSession();
-							if ( xrSession ) {
-
-								xrSession.addEventListener( 'selectstart', onXRSelectStart );
-								xrSession.addEventListener( 'selectend', onXRSelectEnd );
-
-							}
+							renderer.domElement.addEventListener( 'pointermove', onPointerMove );
+							renderer.domElement.addEventListener( 'pointerup', onPointerEnd );
+							renderer.domElement.addEventListener( 'pointercancel', onPointerEnd );
 
 							paintCommands = {
 								clear: clearStrokes,
@@ -5428,21 +5430,15 @@
 						onSessionEnd() {
 
 							renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
-							window.removeEventListener( 'pointerup', onPointerEnd );
-							window.removeEventListener( 'pointercancel', onPointerEnd );
+							renderer.domElement.removeEventListener( 'pointermove', onPointerMove );
+							renderer.domElement.removeEventListener( 'pointerup', onPointerEnd );
+							renderer.domElement.removeEventListener( 'pointercancel', onPointerEnd );
 							renderer.domElement.style.touchAction = '';
-
-							if ( xrSession ) {
-
-								xrSession.removeEventListener( 'selectstart', onXRSelectStart );
-								xrSession.removeEventListener( 'selectend', onXRSelectEnd );
-								xrSession = null;
-
-							}
 
 							isPenDown = false;
 							pendingPenDown = false;
 							pendingPenUp = false;
+							activePointerId = null;
 							paintCommands = null;
 
 							clearStrokes();
