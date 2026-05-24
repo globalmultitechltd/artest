@@ -956,7 +956,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 18:11</div>
+		<div id="version">version: 18:23</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -2617,6 +2617,8 @@
 				}
 
 				const clonedVertices = vertices.map( ( vertex ) => vertex.clone() );
+				const perimeterPoint = new THREE.Vector3();
+				const toCenter = new THREE.Vector3();
 
 				function containsPoint( worldPos ) {
 
@@ -2696,6 +2698,36 @@
 						}
 
 						return center.clone();
+
+					},
+					getRandomPerimeterFloorPoint( target, inset = 0.55 ) {
+
+						const vertexCount = clonedVertices.length;
+						const edgeIndex = Math.floor( Math.random() * vertexCount );
+						const v0 = clonedVertices[ edgeIndex ];
+						const v1 = clonedVertices[ ( edgeIndex + 1 ) % vertexCount ];
+
+						perimeterPoint.lerpVectors( v0, v1, Math.random() );
+						perimeterPoint.y = floorY;
+
+						toCenter.copy( center ).sub( perimeterPoint ).setY( 0 );
+						const distToCenter = toCenter.length();
+
+						if ( distToCenter > 1e-4 ) {
+
+							const insetAmount = Math.min( inset, distToCenter * 0.45 );
+							perimeterPoint.addScaledVector( toCenter.normalize(), insetAmount );
+
+						}
+
+						if ( target ) {
+
+							target.copy( perimeterPoint );
+							return target;
+
+						}
+
+						return perimeterPoint.clone();
 
 					}
 				};
@@ -7229,6 +7261,7 @@
 				const label = 'Zombies';
 				const PLAY_AREA_RADIUS = 2.6;
 				const CENTER_RADIUS = 0.85;
+				const ROOM_SPAWN_WALL_INSET = 0.55;
 				const MIN_SPAWN_PLAYER_DIST = 1.1;
 				const MIN_ZOMBIE_SEPARATION = 0.55;
 				const MAX_SPAWN_ATTEMPTS = 48;
@@ -7482,7 +7515,7 @@
 
 						if ( roomBounds ) {
 
-							target.copy( roomBounds.getRandomFloorPoint() );
+							roomBounds.getRandomPerimeterFloorPoint( target, ROOM_SPAWN_WALL_INSET );
 
 						} else {
 
