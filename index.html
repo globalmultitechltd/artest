@@ -544,21 +544,20 @@
 				display: block;
 			}
 
-			#rc-car-controls {
+			#rc-car-scenery-controls {
 				display: none;
 				position: absolute;
 				left: 50%;
-				bottom: 94px;
+				bottom: 200px;
 				transform: translateX(-50%);
-				grid-template-columns: repeat(3, 1fr);
-				grid-template-rows: repeat(2, auto);
+				align-items: center;
 				gap: 8px;
-				width: min( 72vw, 240px );
-				padding: 12px;
+				padding: 10px 12px;
+				max-width: calc(100vw - 24px);
 				color: #fff;
 				background: rgba(0, 0, 0, 0.82);
 				border: 1px solid rgba(255, 255, 255, 0.28);
-				border-radius: 14px;
+				border-radius: 999px;
 				box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
 				pointer-events: auto;
 				touch-action: manipulation;
@@ -566,54 +565,88 @@
 				user-select: none;
 			}
 
-			#rc-car-controls.visible {
-				display: grid;
+			#rc-car-scenery-controls.visible {
+				display: flex;
 			}
 
-			#rc-car-controls .rc-drive-button {
-				padding: 16px 8px;
+			#rc-car-scenery-controls .control-label {
+				padding: 0 4px 0 6px;
+				font-size: 12px;
+				font-weight: 700;
+				letter-spacing: 0.08em;
+				text-transform: uppercase;
+				opacity: 0.76;
+				white-space: nowrap;
+			}
+
+			.rc-scenery-button {
+				padding: 10px 14px;
 				color: #fff;
 				background: rgba(255, 255, 255, 0.14);
 				border: 1px solid rgba(255, 255, 255, 0.28);
-				border-radius: 12px;
-				font-size: 13px;
+				border-radius: 999px;
+				font-size: 14px;
 				font-weight: 700;
-				letter-spacing: 0.04em;
-				text-transform: uppercase;
+				white-space: nowrap;
 			}
 
-			#rc-car-controls .rc-drive-button:active,
-			#rc-car-controls .rc-drive-button.pressed {
+			.rc-scenery-button.active {
 				color: #020617;
 				background: #fff;
 				border-color: #fff;
 			}
 
-			#rc-car-forward {
-				grid-column: 2;
-				grid-row: 1;
+			.rc-car-drive-panel {
+				display: none;
+				position: absolute;
+				bottom: 88px;
+				flex-direction: column;
+				gap: 10px;
+				padding: 10px;
+				pointer-events: auto;
+				touch-action: manipulation;
+				-webkit-user-select: none;
+				user-select: none;
 			}
 
-			#rc-car-left {
-				grid-column: 1;
-				grid-row: 2;
+			.rc-car-drive-panel.visible {
+				display: flex;
 			}
 
-			#rc-car-back {
-				grid-column: 2;
-				grid-row: 2;
+			#rc-car-drive-left {
+				left: 12px;
 			}
 
-			#rc-car-right {
-				grid-column: 3;
-				grid-row: 2;
+			#rc-car-drive-right {
+				right: 12px;
+			}
+
+			.rc-car-drive-panel .rc-drive-button {
+				min-width: 88px;
+				padding: 22px 12px;
+				color: #fff;
+				background: rgba(0, 0, 0, 0.78);
+				border: 1px solid rgba(255, 255, 255, 0.32);
+				border-radius: 14px;
+				font-size: 13px;
+				font-weight: 700;
+				letter-spacing: 0.04em;
+				text-transform: uppercase;
+				box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+			}
+
+			.rc-car-drive-panel .rc-drive-button:active,
+			.rc-car-drive-panel .rc-drive-button.pressed {
+				color: #020617;
+				background: #fff;
+				border-color: #fff;
 			}
 		</style>
 	</head>
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:35</div>
+		<div id="version">version: 13:44</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -663,10 +696,19 @@
 				</label>
 			</div>
 
-			<div id="rc-car-controls" aria-label="RC car drive controls">
+			<div id="rc-car-scenery-controls" aria-label="RC car scenery">
+				<span class="control-label">Place</span>
+				<button class="rc-scenery-button active" type="button" data-scenery="tree">Tree</button>
+				<button class="rc-scenery-button" type="button" data-scenery="ramp">Ramp</button>
+			</div>
+
+			<div id="rc-car-drive-left" class="rc-car-drive-panel" aria-label="RC car throttle">
 				<button id="rc-car-forward" class="rc-drive-button" type="button" data-drive="forward">Forward</button>
+				<button id="rc-car-back" class="rc-drive-button" type="button" data-drive="back">Reverse</button>
+			</div>
+
+			<div id="rc-car-drive-right" class="rc-car-drive-panel" aria-label="RC car steering">
 				<button id="rc-car-left" class="rc-drive-button" type="button" data-drive="left">Left</button>
-				<button id="rc-car-back" class="rc-drive-button" type="button" data-drive="back">Back</button>
 				<button id="rc-car-right" class="rc-drive-button" type="button" data-drive="right">Right</button>
 			</div>
 
@@ -712,6 +754,7 @@
 			let selectedWorldBuilderSpawnType = 'tree';
 			let paintCommands = null;
 			let rcCarDriveInput = null;
+			let selectedRcCarSceneryType = 'tree';
 
 			const miniGames = {};
 			const AR_START_LABEL = 'START AR MINI GAME';
@@ -807,6 +850,7 @@
 				setupWorldBuilderControls();
 				setupPaintControls();
 				setupRcCarControls();
+				setupRcCarSceneryControls();
 				setupHomeScreen();
 				setupXRSessionHandlers();
 
@@ -861,12 +905,43 @@
 
 			}
 
-			function setupRcCarControls() {
+			function setupRcCarSceneryControls() {
 
-				const controls = document.getElementById( 'rc-car-controls' );
+				const controls = document.getElementById( 'rc-car-scenery-controls' );
 				if ( ! controls ) return;
 
-				const buttons = controls.querySelectorAll( '.rc-drive-button' );
+				const buttons = controls.querySelectorAll( '.rc-scenery-button' );
+
+				function updateButtons() {
+
+					for ( const button of buttons ) {
+
+						button.classList.toggle( 'active', button.dataset.scenery === selectedRcCarSceneryType );
+
+					}
+
+				}
+
+				for ( const button of buttons ) {
+
+					button.addEventListener( 'click', ( event ) => {
+
+						event.preventDefault();
+						event.stopPropagation();
+						selectedRcCarSceneryType = button.dataset.scenery;
+						updateButtons();
+
+					} );
+
+				}
+
+				updateButtons();
+
+			}
+
+			function setupRcCarControls() {
+
+				const buttons = document.querySelectorAll( '.rc-car-drive-panel .rc-drive-button' );
 
 				function setDrive( key, active ) {
 
@@ -1045,7 +1120,9 @@
 				const bounceHud = document.getElementById( 'bounce-hud' );
 				const bounceControls = document.getElementById( 'bounce-controls' );
 				const rcCarHud = document.getElementById( 'rc-car-hud' );
-				const rcCarControls = document.getElementById( 'rc-car-controls' );
+				const rcCarSceneryControls = document.getElementById( 'rc-car-scenery-controls' );
+				const rcCarDriveLeft = document.getElementById( 'rc-car-drive-left' );
+				const rcCarDriveRight = document.getElementById( 'rc-car-drive-right' );
 				const roomScaleSetupEl = document.getElementById( 'room-scale-setup' );
 
 				function showGameOverlayForSelection() {
@@ -1059,8 +1136,11 @@
 					pongHud.classList.toggle( 'visible', selectedMiniGameId === 'pong' );
 					bounceHud.classList.toggle( 'visible', selectedMiniGameId === 'bounce' );
 					bounceControls.classList.toggle( 'visible', selectedMiniGameId === 'bounce' );
-					rcCarHud.classList.toggle( 'visible', selectedMiniGameId === 'rc-car' );
-					rcCarControls.classList.toggle( 'visible', selectedMiniGameId === 'rc-car' );
+					const isRcCar = selectedMiniGameId === 'rc-car';
+					rcCarHud.classList.toggle( 'visible', isRcCar );
+					rcCarSceneryControls.classList.toggle( 'visible', isRcCar );
+					rcCarDriveLeft.classList.toggle( 'visible', isRcCar );
+					rcCarDriveRight.classList.toggle( 'visible', isRcCar );
 
 				}
 
@@ -1169,8 +1249,10 @@
 					bounceHud.classList.remove( 'visible' );
 					bounceControls.classList.remove( 'visible' );
 					rcCarHud.classList.remove( 'visible' );
-					rcCarControls.classList.remove( 'visible' );
-					for ( const button of document.querySelectorAll( '#rc-car-controls .rc-drive-button' ) ) {
+					rcCarSceneryControls.classList.remove( 'visible' );
+					rcCarDriveLeft.classList.remove( 'visible' );
+					rcCarDriveRight.classList.remove( 'visible' );
+					for ( const button of document.querySelectorAll( '.rc-car-drive-panel .rc-drive-button' ) ) {
 
 						button.classList.remove( 'pressed' );
 
@@ -1219,6 +1301,29 @@
 				tree.scale.set( 1, 3, 1 );
 
 				return tree;
+
+			}
+
+			function buildRcRamp() {
+
+				const group = new THREE.Group();
+				const rampMat = new THREE.MeshPhongMaterial( { color: 0x64748b } );
+				const stripeMat = new THREE.MeshPhongMaterial( { color: 0xfacc15 } });
+
+				const rampGeo = new THREE.BoxGeometry( 0.42, 0.06, 0.52 );
+				const ramp = new THREE.Mesh( rampGeo, rampMat );
+				ramp.position.set( 0, 0.08, 0 );
+				ramp.rotation.x = - 0.42;
+				group.add( ramp );
+
+				const lipGeo = new THREE.BoxGeometry( 0.44, 0.03, 0.06 );
+				const lip = new THREE.Mesh( lipGeo, stripeMat );
+				lip.position.set( 0, 0.015, - 0.28 );
+				group.add( lip );
+
+				group.userData.disposables = [ rampGeo, lipGeo, rampMat, stripeMat ];
+
+				return group;
 
 			}
 
@@ -3227,7 +3332,7 @@
 				const DRIVE_SPEED = 0.72;
 				const TURN_SPEED = 2.4;
 				const HUD_PLACING = 'Point at the floor to place your RC car';
-				const HUD_DRIVING = 'Use the buttons to drive on the floor';
+				const HUD_DRIVING = 'Tap the floor to place trees or ramps · Left: drive · Right: steer';
 
 				function buildRcCar() {
 
@@ -3275,7 +3380,7 @@
 
 				}
 
-				function create( { scene, renderer, camera, roomBounds } ) {
+				function create( { scene, renderer, camera, controller1, controller2, roomBounds } ) {
 
 					let hitTestSource = null;
 					let hitTestSourceRequested = false;
@@ -3283,6 +3388,9 @@
 					let carSpawned = false;
 					let sessionStartTime = 0;
 					let lastFrameTime = 0;
+					let hasHitPose = false;
+					let pendingSceneryPlace = false;
+					const placedScenery = [];
 
 					const rcCarHud = document.getElementById( 'rc-car-hud' );
 					const hitPos = new THREE.Vector3();
@@ -3334,6 +3442,90 @@
 						}
 
 						carGroup = null;
+
+					}
+
+					function disposeScenery() {
+
+						for ( const object of placedScenery ) {
+
+							scene.remove( object );
+
+							for ( const disposable of object.userData.disposables || [] ) {
+
+								disposable.dispose();
+
+							}
+
+						}
+
+						placedScenery.length = 0;
+
+					}
+
+					function updateHitPoseFromResults( hitTestResults, referenceSpace ) {
+
+						if ( hitTestResults.length === 0 ) {
+
+							hasHitPose = false;
+							return;
+
+						}
+
+						spawnMatrix.fromArray( hitTestResults[ 0 ].getPose( referenceSpace ).transform.matrix );
+						hasHitPose = true;
+
+					}
+
+					function placeSceneryAt( matrix ) {
+
+						if ( ! carSpawned ) return;
+
+						matrix.decompose( hitPos, hitQuat, hitScale );
+
+						if ( roomBounds && ! roomBounds.containsPoint( hitPos ) ) return;
+
+						const object = selectedRcCarSceneryType === 'ramp' ? buildRcRamp() : createTree();
+						object.position.copy( hitPos );
+						object.quaternion.copy( hitQuat );
+						object.rotation.y += ( Math.random() - 0.5 ) * 0.8;
+
+						if ( roomBounds ) {
+
+							object.position.y = roomBounds.floorY;
+
+						}
+
+						scene.add( object );
+						placedScenery.push( object );
+
+					}
+
+					function tryPlaceScenery() {
+
+						if ( ! carSpawned || ! hasHitPose ) return;
+
+						placeSceneryAt( spawnMatrix );
+
+					}
+
+					function onSelect() {
+
+						tryPlaceScenery();
+
+					}
+
+					function onPlacePointerUp( event ) {
+
+						if ( event.target.closest( '#rc-car-scenery-controls, .rc-car-drive-panel' ) ) return;
+
+						pendingSceneryPlace = true;
+
+					}
+
+					function onXRSelectEnd() {
+
+						pendingSceneryPlace = true;
 
 					}
 
@@ -3472,6 +3664,8 @@
 							hitTestSourceRequested = false;
 							hitTestSource = null;
 							carSpawned = false;
+							hasHitPose = false;
+							pendingSceneryPlace = false;
 							sessionStartTime = performance.now();
 							lastFrameTime = sessionStartTime;
 							rcCarHud.textContent = HUD_PLACING;
@@ -3481,10 +3675,33 @@
 								left: false,
 								right: false
 							};
+							let xrSession = renderer.xr.getSession();
+
+							controller1.addEventListener( 'select', onSelect );
+							controller2.addEventListener( 'select', onSelect );
+							renderer.domElement.addEventListener( 'pointerup', onPlacePointerUp );
+
+							if ( xrSession ) {
+
+								xrSession.addEventListener( 'selectend', onXRSelectEnd );
+
+							}
 
 						},
 
 						onSessionEnd() {
+
+							const xrSession = renderer.xr.getSession();
+
+							controller1.removeEventListener( 'select', onSelect );
+							controller2.removeEventListener( 'select', onSelect );
+							renderer.domElement.removeEventListener( 'pointerup', onPlacePointerUp );
+
+							if ( xrSession ) {
+
+								xrSession.removeEventListener( 'selectend', onXRSelectEnd );
+
+							}
 
 							if ( hitTestSource ) {
 
@@ -3494,7 +3711,10 @@
 							}
 
 							hitTestSourceRequested = false;
+							hasHitPose = false;
+							pendingSceneryPlace = false;
 							disposeCar();
+							disposeScenery();
 							carSpawned = false;
 							rcCarDriveInput = null;
 
@@ -3510,45 +3730,48 @@
 							const referenceSpace = renderer.xr.getReferenceSpace();
 							const session = renderer.xr.getSession();
 
+							if ( hitTestSourceRequested === false ) {
+
+								session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
+
+									session.requestHitTestSource( { space: viewerSpace } ).then( function ( source ) {
+
+										hitTestSource = source;
+
+									} );
+
+								} );
+
+								session.addEventListener( 'end', function () {
+
+									hitTestSourceRequested = false;
+									hitTestSource = null;
+									hasHitPose = false;
+
+								} );
+
+								hitTestSourceRequested = true;
+
+							}
+
+							let hitTestResults = [];
+
+							if ( hitTestSource ) {
+
+								hitTestResults = frame.getHitTestResults( hitTestSource );
+								updateHitPoseFromResults( hitTestResults, referenceSpace );
+
+							}
+
 							if ( ! carSpawned ) {
 
 								if ( roomBounds ) {
 
 									spawnCarInRoom( roomBounds );
 
-								} else if ( hitTestSourceRequested === false ) {
+								} else if ( hitTestResults.length ) {
 
-									session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
-
-										session.requestHitTestSource( { space: viewerSpace } ).then( function ( source ) {
-
-											hitTestSource = source;
-
-										} );
-
-									} );
-
-									session.addEventListener( 'end', function () {
-
-										hitTestSourceRequested = false;
-										hitTestSource = null;
-
-									} );
-
-									hitTestSourceRequested = true;
-
-								}
-
-								if ( hitTestSource ) {
-
-									const hitTestResults = frame.getHitTestResults( hitTestSource );
-
-									if ( hitTestResults.length ) {
-
-										spawnMatrix.fromArray( hitTestResults[ 0 ].getPose( referenceSpace ).transform.matrix );
-										spawnCarAt( spawnMatrix );
-
-									}
+									spawnCarAt( spawnMatrix );
 
 								}
 
@@ -3559,6 +3782,13 @@
 								}
 
 								return;
+
+							}
+
+							if ( pendingSceneryPlace ) {
+
+								pendingSceneryPlace = false;
+								tryPlaceScenery();
 
 							}
 
