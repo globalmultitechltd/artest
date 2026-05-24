@@ -646,7 +646,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 15:35</div>
+		<div id="version">version: 15:40</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -5437,9 +5437,6 @@
 					let isPenDown = false;
 					let pendingPenDown = false;
 					let pendingPenUp = false;
-					let activePointerId = null;
-					let activeInputSource = null;
-					let pendingXRReleaseCheck = false;
 					let currentStroke = null;
 					let currentColorHex = 0xff5b8a;
 					let lastHadTip = false;
@@ -5554,89 +5551,28 @@
 
 					}
 
-					function isInputSourceStillSelecting( session, inputSource ) {
-
-						if ( ! session || ! inputSource ) return false;
-
-						let stillPresent = false;
-
-						for ( const source of session.inputSources ) {
-
-							if ( source === inputSource ) {
-
-								stillPresent = true;
-								break;
-
-							}
-
-						}
-
-						if ( ! stillPresent ) return false;
-
-						const gamepad = inputSource.gamepad;
-
-						if ( gamepad && gamepad.buttons.length > 0 ) {
-
-							return gamepad.buttons[ 0 ].pressed;
-
-						}
-
-						return true;
-
-					}
-
-					function onXRSelectStart( event ) {
-
-						if ( activePointerId !== null ) return;
-
-						activeInputSource = event.inputSource;
-						pendingXRReleaseCheck = false;
-						pendingPenDown = true;
-
-					}
-
-					function onXRSelectEnd( event ) {
-
-						if ( activePointerId !== null ) return;
-						if ( event.inputSource !== activeInputSource ) return;
-
-						pendingXRReleaseCheck = true;
-
-					}
-
 					function onPointerDown( event ) {
 
-						if ( activePointerId !== null ) return;
-
 						event.preventDefault();
-						activePointerId = event.pointerId;
-						activeInputSource = null;
-						pendingXRReleaseCheck = false;
-						renderer.domElement.setPointerCapture( event.pointerId );
 						pendingPenDown = true;
 
 					}
 
-					function onPointerEnd( event ) {
+					function onPointerEnd() {
 
-						if ( event.pointerId !== activePointerId ) return;
-
-						event.preventDefault();
-						if ( renderer.domElement.hasPointerCapture( event.pointerId ) ) {
-
-							renderer.domElement.releasePointerCapture( event.pointerId );
-
-						}
-
-						activePointerId = null;
 						pendingPenUp = true;
 
 					}
 
-					function onPointerMove( event ) {
+					function onXRSelectStart() {
 
-						if ( event.pointerId !== activePointerId ) return;
-						event.preventDefault();
+						pendingPenDown = true;
+
+					}
+
+					function onXRSelectEnd() {
+
+						pendingPenUp = true;
 
 					}
 
@@ -5647,9 +5583,8 @@
 							pickNewColorHex();
 							renderer.domElement.style.touchAction = 'none';
 							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
-							renderer.domElement.addEventListener( 'pointermove', onPointerMove );
-							renderer.domElement.addEventListener( 'pointerup', onPointerEnd );
-							renderer.domElement.addEventListener( 'pointercancel', onPointerEnd );
+							window.addEventListener( 'pointerup', onPointerEnd );
+							window.addEventListener( 'pointercancel', onPointerEnd );
 
 							xrSession = renderer.xr.getSession();
 							if ( xrSession ) {
@@ -5669,9 +5604,8 @@
 						onSessionEnd() {
 
 							renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
-							renderer.domElement.removeEventListener( 'pointermove', onPointerMove );
-							renderer.domElement.removeEventListener( 'pointerup', onPointerEnd );
-							renderer.domElement.removeEventListener( 'pointercancel', onPointerEnd );
+							window.removeEventListener( 'pointerup', onPointerEnd );
+							window.removeEventListener( 'pointercancel', onPointerEnd );
 							renderer.domElement.style.touchAction = '';
 
 							if ( xrSession ) {
@@ -5685,9 +5619,6 @@
 							isPenDown = false;
 							pendingPenDown = false;
 							pendingPenUp = false;
-							activePointerId = null;
-							activeInputSource = null;
-							pendingXRReleaseCheck = false;
 							paintCommands = null;
 
 							clearStrokes();
@@ -5711,31 +5642,12 @@
 
 							}
 
-							if ( isPenDown && activeInputSource && activePointerId === null ) {
-
-								const stillSelecting = isInputSourceStillSelecting( xrSession, activeInputSource );
-
-								if ( pendingXRReleaseCheck ) {
-
-									if ( ! stillSelecting ) pendingPenUp = true;
-									pendingXRReleaseCheck = false;
-
-								} else if ( ! stillSelecting ) {
-
-									pendingPenUp = true;
-
-								}
-
-							}
-
 							if ( pendingPenUp ) {
 
 								pendingPenUp = false;
 								isPenDown = false;
 								currentStroke = null;
 								lastHadTip = false;
-								activeInputSource = null;
-								pendingXRReleaseCheck = false;
 								paintTipDot.classList.remove( 'drawing' );
 
 							}
