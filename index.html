@@ -528,7 +528,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 16:18</div>
+		<div id="version">version: 12:43</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1177,11 +1177,66 @@
 					);
 					wall.position.set( edgeMid.x, floorY + wallHeight / 2, edgeMid.z );
 					wall.quaternion.copy( wallQuat );
+					wall.userData.wallIndex = i;
 					boundaryGroup.add( wall );
 
 				}
 
 				return boundaryGroup;
+
+			}
+
+			function buildRoomWallData( vertices, floorY, wallHeight, boundaryGroup, containsPointFn ) {
+
+				const walls = [];
+				const edgeDir = new THREE.Vector3();
+				const edgeMid = new THREE.Vector3();
+				const inward = new THREE.Vector3();
+				const testPoint = new THREE.Vector3();
+				const meshesByIndex = [];
+
+				boundaryGroup.traverse( ( child ) => {
+
+					if ( child.isMesh && child.userData.wallIndex !== undefined ) {
+
+						meshesByIndex[ child.userData.wallIndex ] = child;
+
+					}
+
+				} );
+
+				for ( let i = 0; i < vertices.length; i ++ ) {
+
+					const start = vertices[ i ];
+					const end = vertices[ ( i + 1 ) % vertices.length ];
+					edgeDir.subVectors( end, start ).setY( 0 );
+					const length = edgeDir.length();
+
+					if ( length < 1e-4 ) continue;
+
+					edgeDir.normalize();
+					inward.set( - edgeDir.z, 0, edgeDir.x );
+					edgeMid.addVectors( start, end ).multiplyScalar( 0.5 );
+					edgeMid.y = floorY;
+					testPoint.copy( edgeMid ).addScaledVector( inward, 0.15 );
+
+					if ( ! containsPointFn( testPoint ) ) inward.multiplyScalar( - 1 );
+
+					walls.push( {
+						index: i,
+						mesh: meshesByIndex[ i ],
+						start: start.clone(),
+						end: end.clone(),
+						midpoint: edgeMid.clone(),
+						normal: inward.clone(),
+						length,
+						floorY,
+						wallHeight
+					} );
+
+				}
+
+				return walls;
 
 			}
 
@@ -1248,6 +1303,30 @@
 
 				const clonedVertices = vertices.map( ( vertex ) => vertex.clone() );
 
+				function containsPoint( worldPos ) {
+
+					let inside = false;
+
+					for ( let i = 0, j = clonedVertices.length - 1; i < clonedVertices.length; j = i ++ ) {
+
+						const xi = clonedVertices[ i ].x;
+						const zi = clonedVertices[ i ].z;
+						const xj = clonedVertices[ j ].x;
+						const zj = clonedVertices[ j ].z;
+						const intersects = ( ( zi > worldPos.z ) !== ( zj > worldPos.z ) ) &&
+							( worldPos.x < ( xj - xi ) * ( worldPos.z - zi ) / ( zj - zi ) + xi );
+
+						if ( intersects ) inside = ! inside;
+
+					}
+
+					return inside;
+
+				}
+
+				const walls = buildRoomWallData( clonedVertices, floorY, wallHeight, boundaryGroup, containsPoint );
+				const defaultWallMaterial = walls[ 0 ]?.mesh?.material || null;
+
 				return {
 					vertices: clonedVertices,
 					floorY,
@@ -1259,24 +1338,11 @@
 					},
 					wallHeight,
 					boundaryGroup,
+					walls,
+					defaultWallMaterial,
 					containsPoint( worldPos ) {
 
-						let inside = false;
-
-						for ( let i = 0, j = clonedVertices.length - 1; i < clonedVertices.length; j = i ++ ) {
-
-							const xi = clonedVertices[ i ].x;
-							const zi = clonedVertices[ i ].z;
-							const xj = clonedVertices[ j ].x;
-							const zj = clonedVertices[ j ].z;
-							const intersects = ( ( zi > worldPos.z ) !== ( zj > worldPos.z ) ) &&
-								( worldPos.x < ( xj - xi ) * ( worldPos.z - zi ) / ( zj - zi ) + xi );
-
-							if ( intersects ) inside = ! inside;
-
-						}
-
-						return inside;
+						return containsPoint( worldPos );
 
 					},
 					getFitScale( contentWidth, contentDepth, margin = 0.88 ) {
@@ -1412,7 +1478,8 @@
 
 					if ( perimeterClosed ) {
 
-						boundaryGroup = buildRoomBoundaryGroup( vertices, wallHeight );
+						const built = buildRoomBoundaryGroup( vertices, wallHeight );
+						boundaryGroup = built;
 
 					} else {
 
@@ -2989,12 +3056,22 @@
 					let halfH = COURT_HEIGHT / 2;
 					let serveCooldown = 0;
 					let awaitingPlayerHit = true;
+					let selectedRoomWallIndex = null;
+					let selectedRoomWall = null;
+					let phase = 'spawn_or_select';
+					let pendingPointerPick = null;
+					let pendingXRPick = null;
+					let xrSession = null;
+					let roomBallMesh = null;
+					const roomBallDisposables = [];
 
 					const ballPos = new THREE.Vector3();
 					const ballVel = new THREE.Vector3();
 					const camPos = new THREE.Vector3();
 					const camLocal = new THREE.Vector3();
 					const playerLocal = new THREE.Vector3();
+					const playerWorld = new THREE.Vector3();
+					const ballToPlayer = new THREE.Vector3();
 					const hitPos = new THREE.Vector3();
 					const hitQuat = new THREE.Quaternion();
 					const hitScale = new THREE.Vector3();
@@ -3004,6 +3081,13 @@
 					const extraRot = new THREE.Quaternion();
 					const spawnMatrix = new THREE.Matrix4();
 					const forward = new THREE.Vector3();
+					const raycaster = new THREE.Raycaster();
+					const pointer = new THREE.Vector2();
+					const pickOrigin = new THREE.Vector3();
+					const pickDir = new THREE.Vector3();
+					const pickQuat = new THREE.Quaternion();
+					const desiredDir = new THREE.Vector3();
+					const tmpNormal = new THREE.Vector3();
 
 					const bounceHud = document.getElementById( 'bounce-hud' );
 					const speedSlider = document.getElementById( 'bounce-speed' );
@@ -3011,6 +3095,12 @@
 					const bounceControls = document.getElementById( 'bounce-controls' );
 					const bounceSound = new Audio( 'sounds/bounce.mp3' );
 					bounceSound.preload = 'auto';
+					const selectedWallMaterial = new THREE.MeshPhongMaterial( {
+						color: 0x22c55e,
+						emissive: 0x14532d,
+						transparent: true,
+						opacity: 0.85
+					} );
 
 					function preventOverlaySelect( event ) {
 
@@ -3044,6 +3134,13 @@
 
 					function updateHud() {
 
+						if ( roomBounds && phase === 'select_wall' ) {
+
+							bounceHud.textContent = 'Choose a wall to serve against, then rally. (Tap a room wall to select.)';
+							return;
+
+						}
+
 						bounceHud.textContent = 'Hits: ' + contactCount + ' — move to intercept the ball (green wall is the target)';
 
 					}
@@ -3063,6 +3160,75 @@
 
 					}
 
+					function restoreRoomWallMaterials() {
+
+						if ( ! roomBounds || ! roomBounds.walls ) return;
+
+						for ( const wall of roomBounds.walls ) {
+
+							if ( ! wall.mesh ) continue;
+							if ( wall.mesh.userData._origMaterial ) wall.mesh.material = wall.mesh.userData._origMaterial;
+
+						}
+
+					}
+
+					function setSelectedRoomWall( wall ) {
+
+						if ( ! wall || ! wall.mesh ) return;
+
+						if ( wall.mesh.userData._origMaterial === undefined ) {
+
+							wall.mesh.userData._origMaterial = wall.mesh.material;
+
+						}
+
+						restoreRoomWallMaterials();
+
+						wall.mesh.material = selectedWallMaterial;
+						selectedRoomWallIndex = wall.index;
+						selectedRoomWall = wall;
+						phase = 'playing';
+						updateHud();
+						serveFromPlayerToSelectedWall();
+
+					}
+
+					function pickRoomWallFromRay() {
+
+						if ( ! roomBounds || ! roomBounds.walls || roomBounds.walls.length === 0 ) return;
+
+						const pickMeshes = roomBounds.walls.map( ( wall ) => wall.mesh ).filter( Boolean );
+						if ( pickMeshes.length === 0 ) return;
+
+						const hits = raycaster.intersectObjects( pickMeshes, false );
+						if ( hits.length === 0 ) return;
+
+						const mesh = hits[ 0 ].object;
+						const wallIndex = mesh.userData.wallIndex;
+						const chosen = roomBounds.walls.find( ( wall ) => wall.index === wallIndex );
+						if ( chosen ) setSelectedRoomWall( chosen );
+
+					}
+
+					function onPointerDown( event ) {
+
+						if ( ! roomBounds || phase !== 'select_wall' ) return;
+
+						event.preventDefault();
+
+						const point = event.changedTouches ? event.changedTouches[ 0 ] : event;
+						pendingPointerPick = { x: point.clientX, y: point.clientY };
+
+					}
+
+					function onXRSelect( event ) {
+
+						if ( ! roomBounds || phase !== 'select_wall' ) return;
+						pendingXRPick = event;
+
+					}
+
 					function disposeCourt() {
 
 						if ( ! courtGroup ) return;
@@ -3076,6 +3242,18 @@
 						}
 
 						courtGroup = null;
+
+					}
+
+					function disposeRoomBall() {
+
+						if ( ! roomBallMesh ) return;
+
+						scene.remove( roomBallMesh );
+
+						for ( const disposable of roomBallDisposables ) disposable.dispose();
+						roomBallDisposables.length = 0;
+						roomBallMesh = null;
 
 					}
 
@@ -3158,6 +3336,115 @@
 							serveFromTargetWall();
 
 						}
+
+					}
+
+					function serveFromPlayerToSelectedWall() {
+
+						if ( ! roomBounds || ! selectedRoomWall ) return;
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( playerWorld );
+
+						const floorY = roomBounds.floorY;
+						const maxY = floorY + Math.max( 0.35, roomBounds.wallHeight - 0.25 );
+						playerWorld.y = THREE.MathUtils.clamp( playerWorld.y, floorY + 0.25, maxY );
+
+						// Start just in front of the player, inside the room.
+						ballPos.copy( playerWorld );
+						ballPos.y = Math.max( ballPos.y, floorY + BALL_RADIUS + 0.05 );
+						ballPos.addScaledVector( selectedRoomWall.normal, 0.15 );
+
+						desiredDir.copy( selectedRoomWall.midpoint ).sub( ballPos );
+						desiredDir.y = THREE.MathUtils.clamp( desiredDir.y, - 0.4, 0.4 );
+
+						if ( desiredDir.lengthSq() < 1e-6 ) desiredDir.set( 0, 0, 1 );
+						desiredDir.normalize();
+
+						ballVel.copy( desiredDir ).multiplyScalar( ballSpeed );
+						serveCooldown = 0.25;
+						awaitingPlayerHit = false;
+
+					}
+
+					function bounceOffRoomWalls() {
+
+						if ( ! roomBounds || ! roomBounds.walls ) return;
+
+						for ( const wall of roomBounds.walls ) {
+
+							if ( ! wall.normal || ! wall.midpoint ) continue;
+
+							tmpNormal.copy( wall.normal );
+							const d = tmpNormal.dot( ballPos.clone().sub( wall.midpoint ) );
+							const vn = ballVel.dot( tmpNormal );
+
+							if ( d < BALL_RADIUS && vn < 0 ) {
+
+								playBounceSound();
+								ballPos.addScaledVector( tmpNormal, BALL_RADIUS - d );
+								ballVel.addScaledVector( tmpNormal, - 2 * vn );
+
+							}
+
+						}
+
+					}
+
+					function bounceOffRoomFloorAndCeiling() {
+
+						if ( ! roomBounds ) return;
+
+						const floorY = roomBounds.floorY;
+						const minY = floorY + BALL_RADIUS;
+						const maxY = floorY + roomBounds.wallHeight - BALL_RADIUS;
+
+						if ( ballPos.y < minY && ballVel.y < 0 ) {
+
+							playBounceSound();
+							ballPos.y = minY;
+							ballVel.y = Math.abs( ballVel.y );
+
+						} else if ( ballPos.y > maxY && ballVel.y > 0 ) {
+
+							playBounceSound();
+							ballPos.y = maxY;
+							ballVel.y = - Math.abs( ballVel.y );
+
+						}
+
+					}
+
+					function tryPlayerHitInRoom() {
+
+						if ( ! roomBounds || ! selectedRoomWall ) return false;
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( playerWorld );
+						playerWorld.y = THREE.MathUtils.clamp( playerWorld.y, roomBounds.floorY + 0.2, roomBounds.floorY + roomBounds.wallHeight - 0.2 );
+
+						ballToPlayer.copy( ballPos ).sub( playerWorld );
+						const distSq = ballToPlayer.lengthSq();
+						if ( distSq > HIT_RADIUS * HIT_RADIUS ) return false;
+
+						// Only count a hit if the ball is moving toward the player.
+						if ( ballVel.dot( ballToPlayer ) >= 0 ) return false;
+
+						playBounceSound();
+						contactCount ++;
+						updateHud();
+
+						// Send ball toward selected wall, with some control based on relative offset.
+						desiredDir.copy( selectedRoomWall.midpoint ).sub( playerWorld );
+						desiredDir.addScaledVector( ballToPlayer.normalize(), 0.25 );
+
+						if ( desiredDir.lengthSq() < 1e-6 ) desiredDir.set( 0, 0, 1 );
+						desiredDir.normalize();
+
+						ballVel.copy( desiredDir ).multiplyScalar( ballSpeed );
+						ballPos.copy( playerWorld ).addScaledVector( desiredDir, BALL_RADIUS + 0.05 );
+
+						return true;
 
 					}
 
@@ -3342,6 +3629,17 @@
 							speedValue.textContent = ballSpeed.toFixed( 1 );
 							speedSlider.addEventListener( 'input', onSpeedInput );
 							if ( bounceControls ) bounceControls.addEventListener( 'beforexrselect', preventOverlaySelect );
+							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
+
+							selectedRoomWallIndex = null;
+							selectedRoomWall = null;
+							pendingPointerPick = null;
+							pendingXRPick = null;
+							phase = roomBounds ? 'select_wall' : 'spawn_or_select';
+
+							xrSession = renderer.xr.getSession();
+							if ( xrSession ) xrSession.addEventListener( 'select', onXRSelect );
+
 							updateHud();
 
 						},
@@ -3350,6 +3648,14 @@
 
 							speedSlider.removeEventListener( 'input', onSpeedInput );
 							if ( bounceControls ) bounceControls.removeEventListener( 'beforexrselect', preventOverlaySelect );
+							renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
+
+							if ( xrSession ) {
+
+								xrSession.removeEventListener( 'select', onXRSelect );
+								xrSession = null;
+
+							}
 
 							if ( hitTestSource ) {
 
@@ -3360,7 +3666,9 @@
 
 							hitTestSourceRequested = false;
 							disposeCourt();
+							disposeRoomBall();
 							courtSpawned = false;
+							restoreRoomWallMaterials();
 							bounceSound.pause();
 							bounceSound.currentTime = 0;
 
@@ -3375,6 +3683,88 @@
 
 							const referenceSpace = renderer.xr.getReferenceSpace();
 							const session = renderer.xr.getSession();
+
+							if ( roomBounds ) {
+
+								if ( phase === 'select_wall' ) {
+
+									if ( pendingPointerPick ) {
+
+										const rect = renderer.domElement.getBoundingClientRect();
+										pointer.x = ( ( pendingPointerPick.x - rect.left ) / rect.width ) * 2 - 1;
+										pointer.y = - ( ( pendingPointerPick.y - rect.top ) / rect.height ) * 2 + 1;
+										pendingPointerPick = null;
+
+										const viewCamera = getViewCamera();
+										raycaster.setFromCamera( pointer, viewCamera );
+										pickRoomWallFromRay();
+
+									}
+
+									if ( pendingXRPick ) {
+
+										const pose = frame.getPose( pendingXRPick.inputSource.targetRaySpace, referenceSpace );
+										pendingXRPick = null;
+
+										if ( pose ) {
+
+											pickOrigin.set(
+												pose.transform.position.x,
+												pose.transform.position.y,
+												pose.transform.position.z
+											);
+											pickQuat.set(
+												pose.transform.orientation.x,
+												pose.transform.orientation.y,
+												pose.transform.orientation.z,
+												pose.transform.orientation.w
+											);
+											pickDir.set( 0, 0, - 1 ).applyQuaternion( pickQuat ).normalize();
+											raycaster.set( pickOrigin, pickDir );
+											pickRoomWallFromRay();
+
+										}
+
+									}
+
+									return;
+
+								}
+
+								// Playing in room scale mode: ball stays within mapped room walls.
+								if ( selectedRoomWall ) {
+
+									if ( serveCooldown > 0 ) {
+
+										serveCooldown -= delta;
+
+									} else {
+
+										ballPos.addScaledVector( ballVel, delta );
+										bounceOffRoomFloorAndCeiling();
+										bounceOffRoomWalls();
+										tryPlayerHitInRoom();
+
+									}
+
+									if ( ! roomBallMesh ) {
+
+										const ballMat = new THREE.MeshPhongMaterial( { color: 0xfef08a, emissive: 0x422006 } );
+										const ballGeo = new THREE.SphereGeometry( BALL_RADIUS, 20, 20 );
+										roomBallDisposables.push( ballGeo, ballMat );
+										roomBallMesh = new THREE.Mesh( ballGeo, ballMat );
+										roomBallMesh.renderOrder = 998;
+										scene.add( roomBallMesh );
+
+									}
+
+									roomBallMesh.position.copy( ballPos );
+
+								}
+
+								return;
+
+							}
 
 							if ( ! courtSpawned ) {
 
