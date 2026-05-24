@@ -423,6 +423,26 @@
 				display: block;
 			}
 
+			#collect-items-hud {
+				display: none;
+				position: fixed;
+				left: 0;
+				right: 0;
+				bottom: 96px;
+				z-index: 10001;
+				text-align: center;
+				font-family: system-ui, sans-serif;
+				font-size: 14px;
+				font-weight: 600;
+				color: #fff;
+				text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+				pointer-events: none;
+			}
+
+			#collect-items-hud.visible {
+				display: block;
+			}
+
 			#ar-overlay {
 				display: none;
 				position: fixed;
@@ -704,7 +724,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 16:40</div>
+		<div id="version">version: 16:47</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -731,6 +751,7 @@
 		<div id="shooter-hud">Tap anywhere to shoot</div>
 		<div id="shooter-crosshair" aria-hidden="true"></div>
 		<div id="maze-hud">Walk through the maze to the green exit</div>
+		<div id="collect-items-hud">Walk into the yellow coins to collect them</div>
 		<div id="rc-car-hud">Point at the floor to place your RC car</div>
 
 		<div id="ar-overlay">
@@ -911,6 +932,7 @@
 				registerMiniGame( createMazeGame() );
 				registerMiniGame( createRcCarGame() );
 				registerMiniGame( createBounceGame() );
+				registerMiniGame( createCollectItemsGame() );
 
 				setupWorldBuilderControls();
 				setupPaintControls();
@@ -1394,6 +1416,7 @@
 				const paintHud = document.getElementById( 'paint-hud' );
 				const paintTipDot = document.getElementById( 'paint-tip-dot' );
 				const mazeHud = document.getElementById( 'maze-hud' );
+				const collectItemsHud = document.getElementById( 'collect-items-hud' );
 				const bounceHud = document.getElementById( 'bounce-hud' );
 				const bounceControls = document.getElementById( 'bounce-controls' );
 				const rcCarHud = document.getElementById( 'rc-car-hud' );
@@ -1410,6 +1433,7 @@
 					paintHud.classList.toggle( 'visible', isPaint );
 					paintTipDot.classList.toggle( 'visible', isPaint );
 					mazeHud.classList.toggle( 'visible', selectedMiniGameId === 'maze' );
+					collectItemsHud.classList.toggle( 'visible', selectedMiniGameId === 'collect-items' );
 					bounceHud.classList.toggle( 'visible', selectedMiniGameId === 'bounce' );
 					bounceControls.classList.toggle( 'visible', selectedMiniGameId === 'bounce' );
 					const isRcCar = selectedMiniGameId === 'rc-car';
@@ -4644,6 +4668,428 @@
 
 							updatePlayerPaddle();
 							stepPhysics( delta );
+
+						}
+
+					};
+
+				}
+
+				return { id, label, create };
+
+			}
+
+			function createCollectItemsGame() {
+
+				const id = 'collect-items';
+				const label = 'Collect Items';
+				const COIN_COLLECT_RADIUS = 0.42;
+				const COIN_MIN_PLAYER_DIST = 0.75;
+				const COIN_MIN_SEPARATION = 0.5;
+				const COIN_SPIN_SPEED = 3.2;
+				const PLAY_AREA_RADIUS = 2.6;
+				const MAX_SPAWN_ATTEMPTS = 48;
+
+				function buildCoinMesh() {
+
+					const group = new THREE.Group();
+					const mat = new THREE.MeshPhongMaterial( {
+						color: 0xfacc15,
+						emissive: 0x854d0e,
+						shininess: 90
+					} );
+					const geo = new THREE.CylinderGeometry( 0.16, 0.16, 0.035, 24 );
+					const mesh = new THREE.Mesh( geo, mat );
+					mesh.position.y = 0.02;
+					group.add( mesh );
+					group.userData.disposables = [ geo, mat ];
+
+					return group;
+
+				}
+
+				function create( { scene, renderer, camera, roomBounds } ) {
+
+					let hitTestSource = null;
+					let hitTestSourceRequested = false;
+					let sessionStartTime = 0;
+					let playReady = false;
+					let currentWave = 1;
+					let totalCollected = 0;
+					let floorY = 0;
+					let lastFrameTime = 0;
+					const coins = [];
+					const playCenter = new THREE.Vector3();
+
+					const collectItemsHud = document.getElementById( 'collect-items-hud' );
+					const itemCollectedSound = new Audio( 'sounds/item_collected.mp3' );
+					itemCollectedSound.preload = 'auto';
+
+					const hitPos = new THREE.Vector3();
+					const hitQuat = new THREE.Quaternion();
+					const hitScale = new THREE.Vector3();
+					const camPos = new THREE.Vector3();
+					const playerPos = new THREE.Vector3();
+					const spawnPos = new THREE.Vector3();
+					const forward = new THREE.Vector3();
+					const up = new THREE.Vector3( 0, 1, 0 );
+					const spawnMatrix = new THREE.Matrix4();
+
+					function getViewCamera() {
+
+						if ( renderer.xr.isPresenting ) {
+
+							const xrCamera = renderer.xr.getCamera();
+
+							if ( xrCamera.cameras && xrCamera.cameras.length > 0 ) {
+
+								const eye = xrCamera.cameras[ 0 ];
+								eye.updateMatrixWorld( true );
+								return eye;
+
+							}
+
+							xrCamera.updateMatrixWorld( true );
+							return xrCamera;
+
+						}
+
+						camera.updateMatrixWorld( true );
+						return camera;
+
+					}
+
+					function updateHud() {
+
+						if ( ! collectItemsHud ) return;
+
+						if ( ! playReady ) {
+
+							collectItemsHud.textContent = 'Finding play area…';
+							return;
+
+						}
+
+						const remaining = coins.length;
+						collectItemsHud.textContent =
+							'Wave ' + currentWave + ' · ' + remaining + ' coin' + ( remaining === 1 ? '' : 's' ) +
+							' left · Collected: ' + totalCollected;
+
+					}
+
+					function playCollectedSound() {
+
+						const hit = itemCollectedSound.cloneNode();
+						hit.volume = 0.9;
+						hit.play().catch( () => {} );
+
+					}
+
+					function disposeCoin( coin ) {
+
+						scene.remove( coin );
+
+						for ( const disposable of coin.userData.disposables || [] ) {
+
+							disposable.dispose();
+
+						}
+
+					}
+
+					function clearCoins() {
+
+						for ( const coin of coins ) {
+
+							disposeCoin( coin );
+
+						}
+
+						coins.length = 0;
+
+					}
+
+					function getPlayerPosition() {
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( playerPos );
+						playerPos.y = playReady ? floorY : playerPos.y;
+
+						return playerPos;
+
+					}
+
+					function isInsidePlayArea( point ) {
+
+						if ( roomBounds ) return roomBounds.containsPoint( point );
+
+						const dx = point.x - playCenter.x;
+						const dz = point.z - playCenter.z;
+
+						return ( dx * dx + dz * dz ) <= PLAY_AREA_RADIUS * PLAY_AREA_RADIUS;
+
+					}
+
+					function randomPlayPosition( target ) {
+
+						if ( roomBounds ) {
+
+							target.copy( roomBounds.getRandomFloorPoint() );
+							return target;
+
+						}
+
+						const angle = Math.random() * Math.PI * 2;
+						const radius = 0.65 + Math.random() * ( PLAY_AREA_RADIUS - 0.65 );
+
+						target.set(
+							playCenter.x + Math.cos( angle ) * radius,
+							floorY,
+							playCenter.z + Math.sin( angle ) * radius
+						);
+
+						return target;
+
+					}
+
+					function isValidSpawn( point, placedCoins, player ) {
+
+						if ( ! isInsidePlayArea( point ) ) return false;
+
+						if ( point.distanceTo( player ) < COIN_MIN_PLAYER_DIST ) return false;
+
+						for ( const coin of placedCoins ) {
+
+							if ( coin.position.distanceTo( point ) < COIN_MIN_SEPARATION ) return false;
+
+						}
+
+						return true;
+
+					}
+
+					function spawnCoins( count ) {
+
+						const player = getPlayerPosition();
+						const placed = [];
+
+						for ( let i = 0; i < count; i ++ ) {
+
+							let positioned = false;
+
+							for ( let attempt = 0; attempt < MAX_SPAWN_ATTEMPTS; attempt ++ ) {
+
+								randomPlayPosition( spawnPos );
+
+								if ( isValidSpawn( spawnPos, [ ...coins, ...placed ], player ) ) {
+
+									positioned = true;
+									break;
+
+								}
+
+							}
+
+							if ( ! positioned ) randomPlayPosition( spawnPos );
+
+							const coin = buildCoinMesh();
+							coin.position.copy( spawnPos );
+							scene.add( coin );
+							coins.push( coin );
+							placed.push( coin );
+
+						}
+
+						updateHud();
+
+					}
+
+					function beginPlay( center, y ) {
+
+						if ( playReady ) return;
+
+						playCenter.copy( center );
+						floorY = y;
+						playReady = true;
+						currentWave = 1;
+						spawnCoins( 1 );
+						updateHud();
+
+					}
+
+					function beginPlayInRoom() {
+
+						beginPlay( roomBounds.center, roomBounds.floorY );
+
+					}
+
+					function beginPlayFromHitMatrix( matrix ) {
+
+						matrix.decompose( hitPos, hitQuat, hitScale );
+						beginPlay( hitPos, hitPos.y );
+
+					}
+
+					function beginPlayInFrontOfCamera() {
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( camPos );
+						viewCamera.getWorldDirection( forward );
+						forward.y = 0;
+
+						if ( forward.lengthSq() < 1e-6 ) forward.set( 0, 0, - 1 );
+						else forward.normalize();
+
+						hitPos.copy( camPos ).addScaledVector( forward, 2.0 );
+						hitPos.y = camPos.y - 1.45;
+						beginPlay( hitPos, hitPos.y );
+
+					}
+
+					function onWaveCleared() {
+
+						currentWave ++;
+						spawnCoins( currentWave );
+
+					}
+
+					function collectCoinAt( index ) {
+
+						const coin = coins[ index ];
+						disposeCoin( coin );
+						coins.splice( index, 1 );
+						totalCollected ++;
+						playCollectedSound();
+
+						if ( coins.length === 0 ) onWaveCleared();
+						else updateHud();
+
+					}
+
+					function checkCollections() {
+
+						if ( ! playReady || coins.length === 0 ) return;
+
+						const player = getPlayerPosition();
+						const collectRadiusSq = COIN_COLLECT_RADIUS * COIN_COLLECT_RADIUS;
+
+						for ( let i = coins.length - 1; i >= 0; i -- ) {
+
+							const coin = coins[ i ];
+							const dx = player.x - coin.position.x;
+							const dz = player.z - coin.position.z;
+
+							if ( ( dx * dx + dz * dz ) < collectRadiusSq ) collectCoinAt( i );
+
+						}
+
+					}
+
+					function spinCoins( delta ) {
+
+						for ( const coin of coins ) {
+
+							coin.rotation.y += COIN_SPIN_SPEED * delta;
+
+						}
+
+					}
+
+					return {
+
+						onSessionStart() {
+
+							hitTestSourceRequested = false;
+							hitTestSource = null;
+							sessionStartTime = performance.now();
+							lastFrameTime = 0;
+							playReady = false;
+							currentWave = 1;
+							totalCollected = 0;
+							clearCoins();
+							updateHud();
+
+						},
+
+						onSessionEnd() {
+
+							if ( hitTestSource ) {
+
+								hitTestSource.cancel();
+								hitTestSource = null;
+
+							}
+
+							hitTestSourceRequested = false;
+							clearCoins();
+							playReady = false;
+
+						},
+
+						onFrame( timestamp, frame ) {
+
+							if ( ! frame ) return;
+
+							const delta = lastFrameTime > 0 ? Math.min( 0.05, ( timestamp - lastFrameTime ) / 1000 ) : 0;
+							lastFrameTime = timestamp;
+
+							if ( ! playReady ) {
+
+								if ( roomBounds ) {
+
+									beginPlayInRoom();
+
+								} else if ( hitTestSourceRequested === false ) {
+
+									const session = renderer.xr.getSession();
+
+									session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
+
+										session.requestHitTestSource( { space: viewerSpace } ).then( function ( source ) {
+
+											hitTestSource = source;
+
+										} );
+
+									} );
+
+									session.addEventListener( 'end', function () {
+
+										hitTestSourceRequested = false;
+										hitTestSource = null;
+
+									} );
+
+									hitTestSourceRequested = true;
+
+								}
+
+								if ( hitTestSource ) {
+
+									const referenceSpace = renderer.xr.getReferenceSpace();
+									const hitTestResults = frame.getHitTestResults( hitTestSource );
+
+									if ( hitTestResults.length ) {
+
+										spawnMatrix.fromArray( hitTestResults[ 0 ].getPose( referenceSpace ).transform.matrix );
+										beginPlayFromHitMatrix( spawnMatrix );
+
+									}
+
+								}
+
+								if ( ! playReady && performance.now() - sessionStartTime > 2200 ) {
+
+									beginPlayInFrontOfCamera();
+
+								}
+
+								return;
+
+							}
+
+							spinCoins( delta );
+							checkCollections();
 
 						}
 
