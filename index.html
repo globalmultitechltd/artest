@@ -956,7 +956,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 18:23</div>
+		<div id="version">version: 18:24</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1004,7 +1004,7 @@
 
 		<div id="ar-overlay">
 			<div id="bounce-hud">Hits: 0</div>
-			<div id="zombies-stats-hud">Lives: 5 · Level 1 · 1 of 1 zombie left</div>
+			<div id="zombies-stats-hud">Lives: 5 · Level 1 · zombies left: 1</div>
 			<div id="world-builder-controls" aria-label="World Builder spawn controls">
 				<span class="control-label">Spawn</span>
 				<button class="spawn-type-button active" type="button" data-spawn-type="tree">Tree</button>
@@ -7280,7 +7280,6 @@
 					let phase = 'setup';
 					let playReady = false;
 					let currentLevel = 1;
-					let zombiesInLevel = 0;
 					let lives = STARTING_LIVES;
 					let hitCooldown = 0;
 					let playerHeight = 1.65;
@@ -7412,10 +7411,8 @@
 						if ( ! zombiesStatsHud ) return;
 
 						const remaining = zombies.length;
-						const killLabel = remaining === 1 ? 'zombie' : 'zombies';
 						zombiesStatsHud.textContent =
-							'Lives: ' + lives + ' · Level ' + currentLevel + ' · ' +
-							remaining + ' of ' + zombiesInLevel + ' ' + killLabel + ' left';
+							'Lives: ' + lives + ' · Level ' + currentLevel + ' · zombies left: ' + remaining;
 						zombiesStatsHud.classList.add( 'visible' );
 
 					}
@@ -7560,7 +7557,6 @@
 
 					function spawnZombies( count ) {
 
-						zombiesInLevel = count;
 						const player = getPlayerPosition();
 						const placed = [];
 
