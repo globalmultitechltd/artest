@@ -223,6 +223,69 @@
 				opacity: 0.85;
 			}
 
+			#bounce-hud {
+				display: none;
+				position: fixed;
+				left: 0;
+				right: 0;
+				top: 110px;
+				z-index: 10001;
+				text-align: center;
+				font-family: system-ui, sans-serif;
+				font-size: 16px;
+				font-weight: 700;
+				color: #fff;
+				text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+				pointer-events: none;
+			}
+
+			#bounce-hud.visible {
+				display: block;
+			}
+
+			#bounce-controls {
+				display: none;
+				position: absolute;
+				left: 50%;
+				bottom: 94px;
+				transform: translateX(-50%);
+				flex-direction: column;
+				align-items: stretch;
+				gap: 10px;
+				width: min(92vw, 320px);
+				padding: 14px;
+				color: #fff;
+				background: rgba(0, 0, 0, 0.82);
+				border: 1px solid rgba(255, 255, 255, 0.28);
+				border-radius: 14px;
+				box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+				pointer-events: auto;
+				touch-action: manipulation;
+			}
+
+			#bounce-controls.visible {
+				display: flex;
+			}
+
+			#bounce-controls label {
+				display: flex;
+				flex-direction: column;
+				gap: 8px;
+				font-size: 13px;
+				font-weight: 600;
+			}
+
+			#bounce-controls input[type="range"] {
+				width: 100%;
+				accent-color: #4ade80;
+			}
+
+			#bounce-speed-value {
+				text-align: center;
+				opacity: 0.85;
+				font-size: 12px;
+			}
+
 			#shooter-hud {
 				display: none;
 				position: fixed;
@@ -465,7 +528,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 15:28</div>
+		<div id="version">version: 16:18</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -486,6 +549,7 @@
 		<div id="shooter-crosshair" aria-hidden="true"></div>
 		<div id="maze-hud">Walk through the maze to the green exit</div>
 		<div id="pong-hud">Move side to side to control your paddle</div>
+		<div id="bounce-hud">Hits: 0 — intercept the ball before it passes you</div>
 
 		<div id="ar-overlay">
 			<div id="world-builder-controls" aria-label="World Builder spawn controls">
@@ -503,6 +567,14 @@
 				<span class="control-label">Paint</span>
 				<button id="paint-new-color-button" class="paint-action-button" type="button">New color</button>
 				<button id="paint-clear-button" class="paint-action-button" type="button">Clear</button>
+			</div>
+
+			<div id="bounce-controls" aria-label="Bounce controls">
+				<label for="bounce-speed">
+					<span>Ball speed</span>
+					<input type="range" id="bounce-speed" min="1.2" max="5.5" step="0.1" value="2.8" />
+					<span id="bounce-speed-value">2.8</span>
+				</label>
 			</div>
 
 			<div id="room-scale-setup" aria-label="Room scale setup">
@@ -616,6 +688,7 @@
 				registerMiniGame( createPaintGame() );
 				registerMiniGame( createMazeGame() );
 				registerMiniGame( createPongGame() );
+				registerMiniGame( createBounceGame() );
 
 				setupWorldBuilderControls();
 				setupPaintControls();
@@ -808,6 +881,8 @@
 				const paintTipDot = document.getElementById( 'paint-tip-dot' );
 				const mazeHud = document.getElementById( 'maze-hud' );
 				const pongHud = document.getElementById( 'pong-hud' );
+				const bounceHud = document.getElementById( 'bounce-hud' );
+				const bounceControls = document.getElementById( 'bounce-controls' );
 				const roomScaleSetupEl = document.getElementById( 'room-scale-setup' );
 
 				function showGameOverlayForSelection() {
@@ -819,6 +894,8 @@
 					paintTipDot.classList.toggle( 'visible', isPaint );
 					mazeHud.classList.toggle( 'visible', selectedMiniGameId === 'maze' );
 					pongHud.classList.toggle( 'visible', selectedMiniGameId === 'pong' );
+					bounceHud.classList.toggle( 'visible', selectedMiniGameId === 'bounce' );
+					bounceControls.classList.toggle( 'visible', selectedMiniGameId === 'bounce' );
 
 				}
 
@@ -920,6 +997,8 @@
 					paintTipDot.classList.remove( 'drawing' );
 					mazeHud.classList.remove( 'visible' );
 					pongHud.classList.remove( 'visible' );
+					bounceHud.classList.remove( 'visible' );
+					bounceControls.classList.remove( 'visible' );
 					homeScreen.classList.remove( 'hidden' );
 					miniGameSelect.disabled = false;
 					if ( roomScaleCheckbox ) roomScaleCheckbox.disabled = false;
@@ -2786,6 +2865,570 @@
 
 							updatePlayerPaddle();
 							updateAiPaddle( delta );
+							stepPhysics( delta );
+
+						}
+
+					};
+
+				}
+
+				return { id, label, create };
+
+			}
+
+			function createBounceGame() {
+
+				const id = 'bounce';
+				const label = 'Bounce';
+				const COURT_WIDTH = 1.6;
+				const COURT_DEPTH = 2.2;
+				const COURT_HEIGHT = 1.5;
+				const BALL_RADIUS = 0.055;
+				const HIT_RADIUS = 0.38;
+				const PADDLE_RADIUS = 0.28;
+				const DEFAULT_BALL_SPEED = 2.8;
+				const WALL_THICKNESS = 0.04;
+
+				function buildBounceCourt( halfW, halfD, halfH ) {
+
+					const group = new THREE.Group();
+					group.userData.disposables = [];
+
+					const wallMat = new THREE.MeshPhongMaterial( {
+						color: 0x475569,
+						transparent: true,
+						opacity: 0.45
+					} );
+					const targetMat = new THREE.MeshPhongMaterial( {
+						color: 0x22c55e,
+						emissive: 0x14532d,
+						transparent: true,
+						opacity: 0.72
+					} );
+					const floorMat = new THREE.MeshPhongMaterial( {
+						color: 0x334155,
+						transparent: true,
+						opacity: 0.28
+					} );
+					const ballMat = new THREE.MeshPhongMaterial( {
+						color: 0xfef08a,
+						emissive: 0x422006
+					} );
+					const paddleMat = new THREE.MeshPhongMaterial( {
+						color: 0x38bdf8,
+						transparent: true,
+						opacity: 0.55,
+						emissive: 0x0c4a6e
+					} );
+
+					const floorGeo = new THREE.BoxGeometry( halfW * 2, WALL_THICKNESS, halfD * 2 );
+					const floor = new THREE.Mesh( floorGeo, floorMat );
+					floor.position.y = WALL_THICKNESS / 2;
+					group.add( floor );
+
+					const sideGeo = new THREE.BoxGeometry( WALL_THICKNESS, halfH * 2, halfD * 2 );
+					const leftWall = new THREE.Mesh( sideGeo, wallMat );
+					leftWall.position.set( - halfW - WALL_THICKNESS / 2, halfH, 0 );
+					group.add( leftWall );
+
+					const rightWall = new THREE.Mesh( sideGeo, wallMat );
+					rightWall.position.set( halfW + WALL_THICKNESS / 2, halfH, 0 );
+					group.add( rightWall );
+
+					const ceilingGeo = new THREE.BoxGeometry( halfW * 2, WALL_THICKNESS, halfD * 2 );
+					const ceiling = new THREE.Mesh( ceilingGeo, wallMat );
+					ceiling.position.y = halfH * 2 - WALL_THICKNESS / 2;
+					group.add( ceiling );
+
+					const endGeo = new THREE.BoxGeometry( halfW * 2, halfH * 2, WALL_THICKNESS );
+					const targetWall = new THREE.Mesh( endGeo, targetMat );
+					targetWall.position.set( 0, halfH, halfD + WALL_THICKNESS / 2 );
+					group.add( targetWall );
+
+					const ballGeo = new THREE.SphereGeometry( BALL_RADIUS, 20, 20 );
+					const ball = new THREE.Mesh( ballGeo, ballMat );
+					ball.position.set( 0, halfH * 0.55, halfD * 0.55 );
+					group.add( ball );
+
+					const paddleGeo = new THREE.CylinderGeometry( PADDLE_RADIUS, PADDLE_RADIUS, 0.02, 24 );
+					paddleGeo.rotateX( Math.PI / 2 );
+					const playerPaddle = new THREE.Mesh( paddleGeo, paddleMat );
+					playerPaddle.position.set( 0, halfH * 0.5, - halfD + 0.12 );
+					group.add( playerPaddle );
+
+					group.userData.disposables.push(
+						floorGeo, sideGeo, ceilingGeo, endGeo, ballGeo, paddleGeo,
+						wallMat, targetMat, floorMat, ballMat, paddleMat
+					);
+					group.userData.ball = ball;
+					group.userData.playerPaddle = playerPaddle;
+					group.userData.targetWall = targetWall;
+					group.userData.playerSideLocal = new THREE.Vector3( 0, 0, - halfD );
+					group.userData.courtCenterLocal = new THREE.Vector3( 0, 0, 0 );
+					group.userData.halfW = halfW;
+					group.userData.halfD = halfD;
+					group.userData.halfH = halfH;
+
+					return group;
+
+				}
+
+				function create( { scene, renderer, camera, roomBounds } ) {
+
+					let hitTestSource = null;
+					let hitTestSourceRequested = false;
+					let courtGroup = null;
+					let courtSpawned = false;
+					let sessionStartTime = 0;
+					let lastFrameTime = 0;
+					let contactCount = 0;
+					let ballSpeed = DEFAULT_BALL_SPEED;
+					let halfW = COURT_WIDTH / 2;
+					let halfD = COURT_DEPTH / 2;
+					let halfH = COURT_HEIGHT / 2;
+					let serveCooldown = 0;
+					let awaitingPlayerHit = true;
+
+					const ballPos = new THREE.Vector3();
+					const ballVel = new THREE.Vector3();
+					const camPos = new THREE.Vector3();
+					const camLocal = new THREE.Vector3();
+					const playerLocal = new THREE.Vector3();
+					const hitPos = new THREE.Vector3();
+					const hitQuat = new THREE.Quaternion();
+					const hitScale = new THREE.Vector3();
+					const toPlayer = new THREE.Vector3();
+					const playerSideDir = new THREE.Vector3();
+					const up = new THREE.Vector3( 0, 1, 0 );
+					const extraRot = new THREE.Quaternion();
+					const spawnMatrix = new THREE.Matrix4();
+					const forward = new THREE.Vector3();
+
+					const bounceHud = document.getElementById( 'bounce-hud' );
+					const speedSlider = document.getElementById( 'bounce-speed' );
+					const speedValue = document.getElementById( 'bounce-speed-value' );
+					const bounceControls = document.getElementById( 'bounce-controls' );
+					const bounceSound = new Audio( 'sounds/bounce.mp3' );
+					bounceSound.preload = 'auto';
+
+					function preventOverlaySelect( event ) {
+
+						event.preventDefault();
+
+					}
+
+					function getViewCamera() {
+
+						if ( renderer.xr.isPresenting ) {
+
+							const xrCamera = renderer.xr.getCamera();
+
+							if ( xrCamera.cameras && xrCamera.cameras.length > 0 ) {
+
+								const eye = xrCamera.cameras[ 0 ];
+								eye.updateMatrixWorld( true );
+								return eye;
+
+							}
+
+							xrCamera.updateMatrixWorld( true );
+							return xrCamera;
+
+						}
+
+						camera.updateMatrixWorld( true );
+						return camera;
+
+					}
+
+					function updateHud() {
+
+						bounceHud.textContent = 'Hits: ' + contactCount + ' — move to intercept the ball (green wall is the target)';
+
+					}
+
+					function onSpeedInput() {
+
+						ballSpeed = parseFloat( speedSlider.value );
+						speedValue.textContent = ballSpeed.toFixed( 1 );
+
+					}
+
+					function playBounceSound() {
+
+						const hit = bounceSound.cloneNode();
+						hit.volume = 0.85;
+						hit.play().catch( () => {} );
+
+					}
+
+					function disposeCourt() {
+
+						if ( ! courtGroup ) return;
+
+						scene.remove( courtGroup );
+
+						for ( const disposable of courtGroup.userData.disposables || [] ) {
+
+							disposable.dispose();
+
+						}
+
+						courtGroup = null;
+
+					}
+
+					function orientCourtTowardPlayer() {
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( camPos );
+						toPlayer.copy( camPos ).sub( hitPos ).setY( 0 );
+
+						if ( toPlayer.lengthSq() < 1e-6 ) return;
+
+						toPlayer.normalize();
+
+						playerSideDir.copy( courtGroup.userData.playerSideLocal )
+							.sub( courtGroup.userData.courtCenterLocal )
+							.setY( 0 );
+
+						if ( playerSideDir.lengthSq() < 1e-6 ) return;
+
+						playerSideDir.normalize();
+						playerSideDir.applyQuaternion( courtGroup.quaternion );
+						playerSideDir.y = 0;
+						playerSideDir.normalize();
+
+						const dot = playerSideDir.dot( toPlayer );
+						const cross = playerSideDir.x * toPlayer.z - playerSideDir.z * toPlayer.x;
+						const extraAngle = Math.atan2( cross, dot );
+
+						extraRot.setFromAxisAngle( up, extraAngle );
+						courtGroup.quaternion.multiply( extraRot );
+
+					}
+
+					function clampBallToBounds() {
+
+						const minX = - halfW + BALL_RADIUS;
+						const maxX = halfW - BALL_RADIUS;
+						const minY = BALL_RADIUS + WALL_THICKNESS;
+						const maxY = halfH * 2 - BALL_RADIUS - WALL_THICKNESS;
+						const minZ = - halfD + BALL_RADIUS;
+						const maxZ = halfD - BALL_RADIUS;
+
+						if ( ballPos.x < minX ) {
+
+							if ( ballVel.x < 0 ) playBounceSound();
+							ballPos.x = minX;
+							ballVel.x = Math.abs( ballVel.x );
+
+						} else if ( ballPos.x > maxX ) {
+
+							if ( ballVel.x > 0 ) playBounceSound();
+							ballPos.x = maxX;
+							ballVel.x = - Math.abs( ballVel.x );
+
+						}
+
+						if ( ballPos.y < minY ) {
+
+							if ( ballVel.y < 0 ) playBounceSound();
+							ballPos.y = minY;
+							ballVel.y = Math.abs( ballVel.y );
+
+						} else if ( ballPos.y > maxY ) {
+
+							if ( ballVel.y > 0 ) playBounceSound();
+							ballPos.y = maxY;
+							ballVel.y = - Math.abs( ballVel.y );
+
+						}
+
+						if ( ballPos.z > maxZ ) {
+
+							if ( ballVel.z > 0 ) playBounceSound();
+							ballPos.z = maxZ;
+							ballVel.z = - Math.abs( ballVel.z );
+							awaitingPlayerHit = true;
+
+						} else if ( ballPos.z < minZ - BALL_RADIUS * 2 ) {
+
+							serveFromTargetWall();
+
+						}
+
+					}
+
+					function normalizeBallSpeed() {
+
+						const speed = ballVel.length();
+
+						if ( speed < 1e-5 ) {
+
+							ballVel.set( 0, 0, - ballSpeed );
+							return;
+
+						}
+
+						ballVel.multiplyScalar( ballSpeed / speed );
+
+					}
+
+					function serveFromTargetWall() {
+
+						const maxZ = halfD - BALL_RADIUS;
+						ballPos.set(
+							( Math.random() - 0.5 ) * halfW * 0.5,
+							halfH * ( 0.4 + Math.random() * 0.35 ),
+							maxZ - BALL_RADIUS
+						);
+						const angle = ( Math.random() - 0.5 ) * 0.7;
+						ballVel.set(
+							Math.sin( angle ) * ballSpeed * 0.35,
+							( Math.random() - 0.5 ) * ballSpeed * 0.15,
+							- Math.cos( angle ) * ballSpeed
+						);
+						normalizeBallSpeed();
+						serveCooldown = 0.35;
+						awaitingPlayerHit = true;
+
+					}
+
+					function tryPlayerHit() {
+
+						if ( ! awaitingPlayerHit || ballVel.z >= 0 ) return false;
+
+						const dx = ballPos.x - playerLocal.x;
+						const dy = ballPos.y - playerLocal.y;
+						const dz = ballPos.z - playerLocal.z;
+						const distSq = dx * dx + dy * dy + dz * dz;
+
+						if ( distSq > HIT_RADIUS * HIT_RADIUS ) return false;
+
+						playBounceSound();
+						contactCount ++;
+						updateHud();
+
+						const hitOffsetX = THREE.MathUtils.clamp( dx / PADDLE_RADIUS, - 1, 1 );
+						const hitOffsetY = THREE.MathUtils.clamp( dy / PADDLE_RADIUS, - 1, 1 );
+
+						ballVel.z = Math.abs( ballVel.z );
+						ballVel.x = hitOffsetX * ballSpeed * 0.55;
+						ballVel.y = hitOffsetY * ballSpeed * 0.35 + halfH * 0.08;
+						normalizeBallSpeed();
+
+						ballPos.z = playerLocal.z + BALL_RADIUS + 0.02;
+						awaitingPlayerHit = false;
+
+						return true;
+
+					}
+
+					function updatePlayerPaddle() {
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( camPos );
+						camLocal.copy( camPos );
+						courtGroup.worldToLocal( camLocal );
+
+						const maxX = halfW - PADDLE_RADIUS;
+						const minY = BALL_RADIUS * 2;
+						const maxY = halfH * 2 - BALL_RADIUS * 2;
+						const paddleZ = - halfD + 0.12;
+
+						playerLocal.set(
+							THREE.MathUtils.clamp( camLocal.x, - maxX, maxX ),
+							THREE.MathUtils.clamp( camLocal.y, minY, maxY ),
+							paddleZ
+						);
+
+						courtGroup.userData.playerPaddle.position.copy( playerLocal );
+
+					}
+
+					function stepPhysics( delta ) {
+
+						if ( serveCooldown > 0 ) {
+
+							serveCooldown -= delta;
+							courtGroup.userData.ball.position.copy( ballPos );
+							return;
+
+						}
+
+						ballPos.x += ballVel.x * delta;
+						ballPos.y += ballVel.y * delta;
+						ballPos.z += ballVel.z * delta;
+
+						clampBallToBounds();
+						tryPlayerHit();
+						courtGroup.userData.ball.position.copy( ballPos );
+
+					}
+
+					function spawnCourtAt( matrix, fitToRoom = null ) {
+
+						if ( courtSpawned ) return;
+
+						matrix.decompose( hitPos, hitQuat, hitScale );
+
+						if ( fitToRoom ) {
+
+							halfW = fitToRoom.halfExtents.x * 0.9;
+							halfD = fitToRoom.halfExtents.z * 0.9;
+							halfH = fitToRoom.wallHeight * 0.48;
+
+						} else {
+
+							halfW = COURT_WIDTH / 2;
+							halfD = COURT_DEPTH / 2;
+							halfH = COURT_HEIGHT / 2;
+
+						}
+
+						courtGroup = buildBounceCourt( halfW, halfD, halfH );
+
+						courtGroup.position.copy( hitPos );
+						courtGroup.quaternion.copy( hitQuat );
+						orientCourtTowardPlayer();
+						courtGroup.updateMatrixWorld( true );
+						scene.add( courtGroup );
+
+						courtSpawned = true;
+						contactCount = 0;
+						updateHud();
+						serveFromTargetWall();
+
+					}
+
+					function spawnCourtInRoom( bounds ) {
+
+						spawnCourtAt( bounds.getSpawnMatrix(), bounds );
+
+					}
+
+					function spawnCourtInFrontOfCamera() {
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( camPos );
+						viewCamera.getWorldDirection( forward );
+						forward.y = 0;
+
+						if ( forward.lengthSq() < 1e-6 ) forward.set( 0, 0, - 1 );
+						else forward.normalize();
+
+						hitPos.copy( camPos ).addScaledVector( forward, 1.6 );
+						hitPos.y = camPos.y - 1.2;
+						hitQuat.setFromAxisAngle( up, Math.atan2( forward.x, forward.z ) );
+						hitScale.set( 1, 1, 1 );
+						spawnMatrix.compose( hitPos, hitQuat, hitScale );
+						spawnCourtAt( spawnMatrix );
+
+					}
+
+					return {
+
+						onSessionStart() {
+
+							hitTestSourceRequested = false;
+							hitTestSource = null;
+							courtSpawned = false;
+							sessionStartTime = performance.now();
+							lastFrameTime = sessionStartTime;
+							contactCount = 0;
+							ballSpeed = parseFloat( speedSlider.value );
+							speedValue.textContent = ballSpeed.toFixed( 1 );
+							speedSlider.addEventListener( 'input', onSpeedInput );
+							if ( bounceControls ) bounceControls.addEventListener( 'beforexrselect', preventOverlaySelect );
+							updateHud();
+
+						},
+
+						onSessionEnd() {
+
+							speedSlider.removeEventListener( 'input', onSpeedInput );
+							if ( bounceControls ) bounceControls.removeEventListener( 'beforexrselect', preventOverlaySelect );
+
+							if ( hitTestSource ) {
+
+								hitTestSource.cancel();
+								hitTestSource = null;
+
+							}
+
+							hitTestSourceRequested = false;
+							disposeCourt();
+							courtSpawned = false;
+							bounceSound.pause();
+							bounceSound.currentTime = 0;
+
+						},
+
+						onFrame( timestamp, frame ) {
+
+							if ( ! frame ) return;
+
+							const delta = Math.min( ( timestamp - lastFrameTime ) / 1000, 0.05 );
+							lastFrameTime = timestamp;
+
+							const referenceSpace = renderer.xr.getReferenceSpace();
+							const session = renderer.xr.getSession();
+
+							if ( ! courtSpawned ) {
+
+								if ( roomBounds ) {
+
+									spawnCourtInRoom( roomBounds );
+
+								} else if ( hitTestSourceRequested === false ) {
+
+									session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
+
+										session.requestHitTestSource( { space: viewerSpace } ).then( function ( source ) {
+
+											hitTestSource = source;
+
+										} );
+
+									} );
+
+									session.addEventListener( 'end', function () {
+
+										hitTestSourceRequested = false;
+										hitTestSource = null;
+
+									} );
+
+									hitTestSourceRequested = true;
+
+								}
+
+								if ( hitTestSource ) {
+
+									const hitTestResults = frame.getHitTestResults( hitTestSource );
+
+									if ( hitTestResults.length ) {
+
+										spawnMatrix.fromArray( hitTestResults[ 0 ].getPose( referenceSpace ).transform.matrix );
+										spawnCourtAt( spawnMatrix );
+
+									}
+
+								}
+
+								if ( ! courtSpawned && ! roomBounds && performance.now() - sessionStartTime > 2200 ) {
+
+									spawnCourtInFrontOfCamera();
+
+								}
+
+								return;
+
+							}
+
+							updatePlayerPaddle();
 							stepPhysics( delta );
 
 						}
