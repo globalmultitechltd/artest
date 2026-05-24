@@ -196,7 +196,8 @@
 				cursor: pointer;
 			}
 
-			#room-scale-option {
+			#room-scale-option,
+			#wall-floor-textures-option {
 				display: flex;
 				align-items: center;
 				gap: 10px;
@@ -209,7 +210,8 @@
 				pointer-events: auto;
 			}
 
-			#room-scale-checkbox {
+			#room-scale-checkbox,
+			#wall-floor-textures-checkbox {
 				width: 20px;
 				height: 20px;
 				accent-color: #2563eb;
@@ -886,7 +888,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 17:36</div>
+		<div id="version">version: 17:38</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -895,6 +897,10 @@
 				<label id="room-scale-option" for="room-scale-checkbox">
 					<input type="checkbox" id="room-scale-checkbox" />
 					Room scale
+				</label>
+				<label id="wall-floor-textures-option" for="wall-floor-textures-checkbox">
+					<input type="checkbox" id="wall-floor-textures-checkbox" checked />
+					Wall and floor textures
 				</label>
 			</div>
 			<div id="home-actions">
@@ -1022,6 +1028,7 @@
 			let activeRoomScaleSetup = null;
 			let selectedMiniGameId = 'world-builder';
 			let roomScaleEnabled = false;
+			let wallFloorTexturesEnabled = true;
 			let savedRoomBounds = null;
 			let standaloneRoomScaleSetup = false;
 			let selectedWorldBuilderSpawnType = 'tree';
@@ -1563,6 +1570,18 @@
 
 				}
 
+				const wallFloorTexturesCheckbox = document.getElementById( 'wall-floor-textures-checkbox' );
+				if ( wallFloorTexturesCheckbox ) {
+
+					wallFloorTexturesCheckbox.addEventListener( 'change', () => {
+
+						wallFloorTexturesEnabled = wallFloorTexturesCheckbox.checked;
+						if ( ! wallFloorTexturesEnabled ) clearRoomTextures();
+
+					} );
+
+				}
+
 				const saveRoomScaleBtn = document.getElementById( 'save-room-scale-btn' );
 				const loadRoomScaleBtn = document.getElementById( 'load-room-scale-btn' );
 
@@ -1699,6 +1718,7 @@
 				const homeScreen = document.getElementById( 'home-screen' );
 				const miniGameSelect = document.getElementById( 'mini-game-select' );
 				const roomScaleCheckbox = document.getElementById( 'room-scale-checkbox' );
+				const wallFloorTexturesCheckbox = document.getElementById( 'wall-floor-textures-checkbox' );
 				const arOverlay = document.getElementById( 'ar-overlay' );
 				const worldBuilderControls = document.getElementById( 'world-builder-controls' );
 				const paintControls = document.getElementById( 'paint-controls' );
@@ -1806,6 +1826,7 @@
 					homeScreen.classList.add( 'hidden' );
 					miniGameSelect.disabled = true;
 					if ( roomScaleCheckbox ) roomScaleCheckbox.disabled = true;
+					if ( wallFloorTexturesCheckbox ) wallFloorTexturesCheckbox.disabled = true;
 					arOverlay.classList.add( 'visible' );
 
 					const gameContext = {
@@ -1897,6 +1918,7 @@
 					homeScreen.classList.remove( 'hidden' );
 					miniGameSelect.disabled = false;
 					if ( roomScaleCheckbox ) roomScaleCheckbox.disabled = false;
+					if ( wallFloorTexturesCheckbox ) wallFloorTexturesCheckbox.disabled = false;
 
 					const arButton = document.getElementById( 'ARButton' );
 					if ( arButton && arButton.textContent === 'START AR' ) {
@@ -2073,6 +2095,8 @@
 
 			function getRoomWallTexture() {
 
+				if ( ! wallFloorTexturesEnabled ) return null;
+
 				if ( ! roomWallTexture ) {
 
 					roomWallTexture = roomTextureLoader.load( 'textures/wall.jpg' );
@@ -2086,6 +2110,8 @@
 
 			function getRoomFloorTexture() {
 
+				if ( ! wallFloorTexturesEnabled ) return null;
+
 				if ( ! roomFloorTexture ) {
 
 					roomFloorTexture = roomTextureLoader.load( 'textures/floor.jpg' );
@@ -2094,6 +2120,24 @@
 				}
 
 				return roomFloorTexture;
+
+			}
+
+			function clearRoomTextures() {
+
+				if ( roomWallTexture ) {
+
+					roomWallTexture.dispose();
+					roomWallTexture = null;
+
+				}
+
+				if ( roomFloorTexture ) {
+
+					roomFloorTexture.dispose();
+					roomFloorTexture = null;
+
+				}
 
 			}
 
@@ -2161,11 +2205,17 @@
 
 				const floorGeometry = new THREE.ShapeGeometry( floorShape );
 				floorGeometry.rotateX( - Math.PI / 2 );
-				applyStretchedFloorUVs( floorGeometry );
-				const floorMaterial = new THREE.MeshPhongMaterial( {
-					map: getRoomFloorTexture(),
-					side: THREE.DoubleSide
-				} );
+				if ( wallFloorTexturesEnabled ) applyStretchedFloorUVs( floorGeometry );
+
+				const floorMaterial = wallFloorTexturesEnabled
+					? new THREE.MeshPhongMaterial( {
+						map: getRoomFloorTexture(),
+						side: THREE.DoubleSide
+					} )
+					: new THREE.MeshPhongMaterial( {
+						color: 0x4b5563,
+						side: THREE.DoubleSide
+					} );
 				const floorMesh = new THREE.Mesh( floorGeometry, floorMaterial );
 				floorMesh.position.y = floorY + 0.01;
 				floorMesh.userData.isRoomFloor = true;
@@ -2193,11 +2243,17 @@
 
 					const wall = new THREE.Mesh(
 						new THREE.BoxGeometry( length, wallHeight, wallThickness ),
-						new THREE.MeshPhongMaterial( {
-							map: getRoomWallTexture(),
-							transparent: true,
-							opacity: 0.95
-						} )
+						wallFloorTexturesEnabled
+							? new THREE.MeshPhongMaterial( {
+								map: getRoomWallTexture(),
+								transparent: true,
+								opacity: 0.95
+							} )
+							: new THREE.MeshPhongMaterial( {
+								color: 0x94a3b8,
+								transparent: true,
+								opacity: 0.95
+							} )
 					);
 					wall.position.set( edgeMid.x, floorY + wallHeight / 2, edgeMid.z );
 					wall.quaternion.copy( wallQuat );
