@@ -803,7 +803,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 16:59</div>
+		<div id="version">version: 17:01</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -830,7 +830,7 @@
 		<div id="shooter-hud">Tap anywhere to shoot</div>
 		<div id="shooter-crosshair" aria-hidden="true"></div>
 		<div id="maze-hud">Walk through the maze to the green exit</div>
-		<div id="collect-items-hud">Walk into the yellow coins to collect them</div>
+		<div id="collect-items-hud">Level 1 · Collect all rings</div>
 		<div id="rc-car-hud">Point at the floor to place your RC car</div>
 		<div id="platforms-hud">Jump across platforms to reach the green exit</div>
 
@@ -5623,24 +5623,37 @@
 
 				const id = 'collect-items';
 				const label = 'Collect Items';
-				const COIN_COLLECT_RADIUS = 0.42;
-				const COIN_MIN_PLAYER_DIST = 0.75;
-				const COIN_MIN_SEPARATION = 0.5;
-				const COIN_SPIN_SPEED = 3.2;
+				const RING_COLLECT_RADIUS = 0.38;
+				const RING_MIN_PLAYER_DIST = 0.7;
+				const RING_MIN_SEPARATION = 0.55;
+				const RING_SPIN_SPEED = 3.4;
 				const PLAY_AREA_RADIUS = 2.6;
+				const PLAY_HEIGHT_NO_ROOM = 2.1;
+				const MIN_HEIGHT_ABOVE_FLOOR = 0.45;
 				const MAX_SPAWN_ATTEMPTS = 48;
 
-				function buildCoinMesh() {
+				function colorForRingIndex( index ) {
+
+					const color = new THREE.Color();
+					color.setHSL( ( index * 0.137508 ) % 1, 0.82, 0.58 );
+					return color;
+
+				}
+
+				function buildRingMesh( colorIndex ) {
 
 					const group = new THREE.Group();
+					const color = colorForRingIndex( colorIndex );
+					const emissive = color.clone().multiplyScalar( 0.28 );
 					const mat = new THREE.MeshPhongMaterial( {
-						color: 0xfacc15,
-						emissive: 0x854d0e,
-						shininess: 90
+						color,
+						emissive,
+						shininess: 75,
+						side: THREE.DoubleSide
 					} );
-					const geo = new THREE.CylinderGeometry( 0.16, 0.16, 0.035, 24 );
+					const geo = new THREE.TorusGeometry( 0.2, 0.03, 12, 32 );
 					const mesh = new THREE.Mesh( geo, mat );
-					mesh.position.y = 0.02;
+					mesh.rotation.y = Math.PI / 2;
 					group.add( mesh );
 					group.userData.disposables = [ geo, mat ];
 
@@ -5654,11 +5667,13 @@
 					let hitTestSourceRequested = false;
 					let sessionStartTime = 0;
 					let playReady = false;
-					let currentWave = 1;
-					let totalCollected = 0;
+					let currentLevel = 1;
+					let ringColorSeed = 0;
 					let floorY = 0;
+					let playMinY = 0;
+					let playMaxY = 0;
 					let lastFrameTime = 0;
-					const coins = [];
+					const rings = [];
 					const playCenter = new THREE.Vector3();
 
 					const collectItemsHud = document.getElementById( 'collect-items-hud' );
@@ -5710,10 +5725,29 @@
 
 						}
 
-						const remaining = coins.length;
+						const remaining = rings.length;
 						collectItemsHud.textContent =
-							'Wave ' + currentWave + ' · ' + remaining + ' coin' + ( remaining === 1 ? '' : 's' ) +
-							' left · Collected: ' + totalCollected;
+							'Level ' + currentLevel + ' · ' + remaining + ' of ' + currentLevel +
+							' ring' + ( currentLevel === 1 ? '' : 's' ) + ' left';
+
+					}
+
+					function updatePlayHeightRange() {
+
+						playMinY = floorY + MIN_HEIGHT_ABOVE_FLOOR;
+
+						if ( roomBounds ) {
+
+							playMaxY = floorY + Math.max(
+								MIN_HEIGHT_ABOVE_FLOOR + 0.35,
+								roomBounds.wallHeight - 0.25
+							);
+
+						} else {
+
+							playMaxY = floorY + PLAY_HEIGHT_NO_ROOM;
+
+						}
 
 					}
 
@@ -5725,11 +5759,11 @@
 
 					}
 
-					function disposeCoin( coin ) {
+					function disposeRing( ring ) {
 
-						scene.remove( coin );
+						scene.remove( ring );
 
-						for ( const disposable of coin.userData.disposables || [] ) {
+						for ( const disposable of ring.userData.disposables || [] ) {
 
 							disposable.dispose();
 
@@ -5737,15 +5771,15 @@
 
 					}
 
-					function clearCoins() {
+					function clearRings() {
 
-						for ( const coin of coins ) {
+						for ( const ring of rings ) {
 
-							disposeCoin( coin );
+							disposeRing( ring );
 
 						}
 
-						coins.length = 0;
+						rings.length = 0;
 
 					}
 
@@ -5753,13 +5787,14 @@
 
 						const viewCamera = getViewCamera();
 						viewCamera.getWorldPosition( playerPos );
-						playerPos.y = playReady ? floorY : playerPos.y;
 
 						return playerPos;
 
 					}
 
 					function isInsidePlayArea( point ) {
+
+						if ( point.y < playMinY || point.y > playMaxY ) return false;
 
 						if ( roomBounds ) return roomBounds.containsPoint( point );
 
@@ -5775,32 +5810,35 @@
 						if ( roomBounds ) {
 
 							target.copy( roomBounds.getRandomFloorPoint() );
-							return target;
+
+						} else {
+
+							const angle = Math.random() * Math.PI * 2;
+							const radius = 0.65 + Math.random() * ( PLAY_AREA_RADIUS - 0.65 );
+
+							target.set(
+								playCenter.x + Math.cos( angle ) * radius,
+								floorY,
+								playCenter.z + Math.sin( angle ) * radius
+							);
 
 						}
 
-						const angle = Math.random() * Math.PI * 2;
-						const radius = 0.65 + Math.random() * ( PLAY_AREA_RADIUS - 0.65 );
-
-						target.set(
-							playCenter.x + Math.cos( angle ) * radius,
-							floorY,
-							playCenter.z + Math.sin( angle ) * radius
-						);
+						target.y = playMinY + Math.random() * ( playMaxY - playMinY );
 
 						return target;
 
 					}
 
-					function isValidSpawn( point, placedCoins, player ) {
+					function isValidSpawn( point, placedRings, player ) {
 
 						if ( ! isInsidePlayArea( point ) ) return false;
 
-						if ( point.distanceTo( player ) < COIN_MIN_PLAYER_DIST ) return false;
+						if ( point.distanceTo( player ) < RING_MIN_PLAYER_DIST ) return false;
 
-						for ( const coin of placedCoins ) {
+						for ( const ring of placedRings ) {
 
-							if ( coin.position.distanceTo( point ) < COIN_MIN_SEPARATION ) return false;
+							if ( ring.position.distanceTo( point ) < RING_MIN_SEPARATION ) return false;
 
 						}
 
@@ -5808,7 +5846,7 @@
 
 					}
 
-					function spawnCoins( count ) {
+					function spawnRings( count ) {
 
 						const player = getPlayerPosition();
 						const placed = [];
@@ -5821,7 +5859,7 @@
 
 								randomPlayPosition( spawnPos );
 
-								if ( isValidSpawn( spawnPos, [ ...coins, ...placed ], player ) ) {
+								if ( isValidSpawn( spawnPos, [ ...rings, ...placed ], player ) ) {
 
 									positioned = true;
 									break;
@@ -5832,11 +5870,11 @@
 
 							if ( ! positioned ) randomPlayPosition( spawnPos );
 
-							const coin = buildCoinMesh();
-							coin.position.copy( spawnPos );
-							scene.add( coin );
-							coins.push( coin );
-							placed.push( coin );
+							const ring = buildRingMesh( ringColorSeed ++ );
+							ring.position.copy( spawnPos );
+							scene.add( ring );
+							rings.push( ring );
+							placed.push( ring );
 
 						}
 
@@ -5850,9 +5888,10 @@
 
 						playCenter.copy( center );
 						floorY = y;
+						updatePlayHeightRange();
 						playReady = true;
-						currentWave = 1;
-						spawnCoins( 1 );
+						currentLevel = 1;
+						spawnRings( 1 );
 						updateHud();
 
 					}
@@ -5886,50 +5925,45 @@
 
 					}
 
-					function onWaveCleared() {
+					function onLevelComplete() {
 
-						currentWave ++;
-						spawnCoins( currentWave );
+						currentLevel ++;
+						spawnRings( currentLevel );
 
 					}
 
-					function collectCoinAt( index ) {
+					function collectRingAt( index ) {
 
-						const coin = coins[ index ];
-						disposeCoin( coin );
-						coins.splice( index, 1 );
-						totalCollected ++;
+						const ring = rings[ index ];
+						disposeRing( ring );
+						rings.splice( index, 1 );
 						playCollectedSound();
 
-						if ( coins.length === 0 ) onWaveCleared();
+						if ( rings.length === 0 ) onLevelComplete();
 						else updateHud();
 
 					}
 
 					function checkCollections() {
 
-						if ( ! playReady || coins.length === 0 ) return;
+						if ( ! playReady || rings.length === 0 ) return;
 
 						const player = getPlayerPosition();
-						const collectRadiusSq = COIN_COLLECT_RADIUS * COIN_COLLECT_RADIUS;
+						const collectRadiusSq = RING_COLLECT_RADIUS * RING_COLLECT_RADIUS;
 
-						for ( let i = coins.length - 1; i >= 0; i -- ) {
+						for ( let i = rings.length - 1; i >= 0; i -- ) {
 
-							const coin = coins[ i ];
-							const dx = player.x - coin.position.x;
-							const dz = player.z - coin.position.z;
-
-							if ( ( dx * dx + dz * dz ) < collectRadiusSq ) collectCoinAt( i );
+							if ( player.distanceToSquared( rings[ i ].position ) < collectRadiusSq ) collectRingAt( i );
 
 						}
 
 					}
 
-					function spinCoins( delta ) {
+					function spinRings( delta ) {
 
-						for ( const coin of coins ) {
+						for ( const ring of rings ) {
 
-							coin.rotation.y += COIN_SPIN_SPEED * delta;
+							ring.rotation.y += RING_SPIN_SPEED * delta;
 
 						}
 
@@ -5944,9 +5978,9 @@
 							sessionStartTime = performance.now();
 							lastFrameTime = 0;
 							playReady = false;
-							currentWave = 1;
-							totalCollected = 0;
-							clearCoins();
+							currentLevel = 1;
+							ringColorSeed = 0;
+							clearRings();
 							updateHud();
 
 						},
@@ -5961,7 +5995,7 @@
 							}
 
 							hitTestSourceRequested = false;
-							clearCoins();
+							clearRings();
 							playReady = false;
 
 						},
@@ -6028,7 +6062,7 @@
 
 							}
 
-							spinCoins( delta );
+							spinRings( delta );
 							checkCollections();
 
 						}
