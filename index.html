@@ -463,6 +463,26 @@
 				display: block;
 			}
 
+			#zombies-stats-hud {
+				display: none;
+				position: absolute;
+				left: 0;
+				right: 0;
+				top: 110px;
+				z-index: 10003;
+				text-align: center;
+				font-family: system-ui, sans-serif;
+				font-size: 18px;
+				font-weight: 700;
+				color: #fff;
+				text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+				pointer-events: none;
+			}
+
+			#zombies-stats-hud.visible {
+				display: block;
+			}
+
 			#zombies-controls {
 				display: none;
 				position: absolute;
@@ -866,7 +886,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 17:29</div>
+		<div id="version">version: 17:36</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -900,6 +920,7 @@
 
 		<div id="ar-overlay">
 			<div id="bounce-hud">Hits: 0</div>
+			<div id="zombies-stats-hud">Lives: 5 · Level 1 · 1 of 1 zombie left</div>
 			<div id="world-builder-controls" aria-label="World Builder spawn controls">
 				<span class="control-label">Spawn</span>
 				<button class="spawn-type-button active" type="button" data-spawn-type="tree">Tree</button>
@@ -1686,6 +1707,7 @@
 				const mazeHud = document.getElementById( 'maze-hud' );
 				const collectItemsHud = document.getElementById( 'collect-items-hud' );
 				const zombiesHud = document.getElementById( 'zombies-hud' );
+				const zombiesStatsHud = document.getElementById( 'zombies-stats-hud' );
 				const zombiesControls = document.getElementById( 'zombies-controls' );
 				const bounceHud = document.getElementById( 'bounce-hud' );
 				const bounceControls = document.getElementById( 'bounce-controls' );
@@ -1853,6 +1875,7 @@
 					mazeHud.classList.remove( 'visible' );
 					collectItemsHud.classList.remove( 'visible' );
 					zombiesHud.classList.remove( 'visible' );
+					zombiesStatsHud.classList.remove( 'visible' );
 					zombiesControls.classList.remove( 'visible' );
 					bounceHud.classList.remove( 'visible' );
 					bounceControls.classList.remove( 'visible' );
@@ -6852,6 +6875,8 @@
 				const ZOMBIE_HIT_RADIUS = 0.32;
 				const PLAYER_COLLISION_RADIUS = 0.38;
 				const DEFAULT_ZOMBIE_SPEED = 0.45;
+				const STARTING_LIVES = 5;
+				const HIT_COOLDOWN_SEC = 1.5;
 
 				function create( { scene, renderer, camera, roomBounds } ) {
 
@@ -6862,6 +6887,9 @@
 					let phase = 'setup';
 					let playReady = false;
 					let currentLevel = 1;
+					let zombiesInLevel = 0;
+					let lives = STARTING_LIVES;
+					let hitCooldown = 0;
 					let playerHeight = 1.65;
 					let floorY = 0;
 					let zombieSpeed = DEFAULT_ZOMBIE_SPEED;
@@ -6895,6 +6923,7 @@
 					const camPos = new THREE.Vector3();
 
 					const zombiesHud = document.getElementById( 'zombies-hud' );
+					const zombiesStatsHud = document.getElementById( 'zombies-stats-hud' );
 					const zombiesControls = document.getElementById( 'zombies-controls' );
 					const speedSlider = document.getElementById( 'zombies-speed' );
 					const speedValue = document.getElementById( 'zombies-speed-value' );
@@ -6903,6 +6932,8 @@
 					gunSound.preload = 'auto';
 					const zombieSound = new Audio( 'sounds/zombie.mp3' );
 					zombieSound.preload = 'auto';
+					const lifeLostSound = new Audio( 'sounds/life lost music.mp3' );
+					lifeLostSound.preload = 'auto';
 
 					const textureLoader = new THREE.TextureLoader();
 					const zombieTexture = textureLoader.load( 'textures/zombie.png' );
@@ -6959,6 +6990,8 @@
 						if ( phase === 'setup' ) {
 
 							zombiesHud.textContent = 'Finding play area…';
+							zombiesHud.classList.add( 'visible' );
+							if ( zombiesStatsHud ) zombiesStatsHud.classList.remove( 'visible' );
 							return;
 
 						}
@@ -6966,20 +6999,31 @@
 						if ( phase === 'calibrate' ) {
 
 							zombiesHud.textContent = 'Stand up straight in the middle of the play area, then tap to calibrate';
+							zombiesHud.classList.add( 'visible' );
+							if ( zombiesStatsHud ) zombiesStatsHud.classList.remove( 'visible' );
 							return;
 
 						}
 
 						if ( phase === 'game_over' ) {
 
-							zombiesHud.textContent = 'A zombie got you! Tap to restart';
+							zombiesHud.textContent = 'Out of lives! Tap to restart';
+							zombiesHud.classList.add( 'visible' );
+							if ( zombiesStatsHud ) zombiesStatsHud.classList.remove( 'visible' );
 							return;
 
 						}
 
+						zombiesHud.classList.remove( 'visible' );
+
+						if ( ! zombiesStatsHud ) return;
+
 						const remaining = zombies.length;
-						zombiesHud.textContent =
-							'Level ' + currentLevel + ' · ' + remaining + ' zombie' + ( remaining === 1 ? '' : 's' ) + ' left';
+						const killLabel = remaining === 1 ? 'zombie' : 'zombies';
+						zombiesStatsHud.textContent =
+							'Lives: ' + lives + ' · Level ' + currentLevel + ' · ' +
+							remaining + ' of ' + zombiesInLevel + ' ' + killLabel + ' left';
+						zombiesStatsHud.classList.add( 'visible' );
 
 					}
 
@@ -7123,6 +7167,7 @@
 
 					function spawnZombies( count ) {
 
+						zombiesInLevel = count;
 						const player = getPlayerPosition();
 						const placed = [];
 
@@ -7214,6 +7259,8 @@
 						const player = getPlayerPosition();
 						playerHeight = Math.max( 1.2, Math.min( 2.2, ( player.y - floorY ) * 1.08 ) );
 						rebuildZombieAssets();
+						lives = STARTING_LIVES;
+						hitCooldown = 0;
 						phase = 'playing';
 						currentLevel = 1;
 						clearZombies();
@@ -7247,6 +7294,8 @@
 					function startPlayingLevel( level ) {
 
 						currentLevel = level;
+						lives = STARTING_LIVES;
+						hitCooldown = 0;
 						clearZombies();
 						spawnZombies( level );
 						phase = 'playing';
@@ -7259,6 +7308,37 @@
 						phase = 'game_over';
 						clearZombies();
 						updateHud();
+
+					}
+
+					function playLifeLostSound() {
+
+						const lost = lifeLostSound.cloneNode();
+						lost.volume = 0.9;
+						lost.play().catch( () => {} );
+
+					}
+
+					function onZombieCollision( index ) {
+
+						if ( hitCooldown > 0 ) return;
+
+						disposeZombie( zombies[ index ] );
+						zombies.splice( index, 1 );
+
+						lives --;
+						playLifeLostSound();
+						hitCooldown = HIT_COOLDOWN_SEC;
+
+						if ( lives <= 0 ) {
+
+							onGameOver();
+							return;
+
+						}
+
+						if ( zombies.length === 0 ) onLevelComplete();
+						else updateHud();
 
 					}
 
@@ -7593,6 +7673,8 @@
 
 						if ( phase !== 'playing' || zombies.length === 0 ) return;
 
+						if ( hitCooldown > 0 ) hitCooldown = Math.max( 0, hitCooldown - delta );
+
 						const player = getPlayerPosition();
 
 						for ( let i = zombies.length - 1; i >= 0; i -- ) {
@@ -7604,7 +7686,7 @@
 
 							if ( distance < PLAYER_COLLISION_RADIUS ) {
 
-								onGameOver();
+								onZombieCollision( i );
 								return;
 
 							}
@@ -7647,6 +7729,8 @@
 							playReady = false;
 							phase = 'setup';
 							currentLevel = 1;
+							lives = STARTING_LIVES;
+							hitCooldown = 0;
 							pendingPointerShot = null;
 							pendingXRSelect = null;
 							pendingCalibrateTap = null;
@@ -7668,6 +7752,7 @@
 							if ( xrSession ) xrSession.addEventListener( 'select', onXRSelect );
 
 							shooterCrosshair.classList.toggle( 'visible', phase === 'playing' );
+							if ( zombiesStatsHud ) zombiesStatsHud.classList.remove( 'visible' );
 							updateHud();
 
 						},
@@ -7689,6 +7774,7 @@
 							pendingXRSelect = null;
 							pendingCalibrateTap = null;
 							shooterCrosshair.classList.remove( 'visible' );
+							if ( zombiesStatsHud ) zombiesStatsHud.classList.remove( 'visible' );
 							clearZombies();
 
 							for ( const trail of [ ...bulletTrails ] ) removeBulletTrail( trail );
@@ -7714,6 +7800,8 @@
 							gunSound.currentTime = 0;
 							zombieSound.pause();
 							zombieSound.currentTime = 0;
+							lifeLostSound.pause();
+							lifeLostSound.currentTime = 0;
 							playReady = false;
 							phase = 'setup';
 							wallPickMeshes = [];
