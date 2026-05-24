@@ -646,7 +646,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:51</div>
+		<div id="version">version: 14:00</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -703,8 +703,8 @@
 			</div>
 
 			<div id="rc-car-drive-left" class="rc-car-drive-panel" aria-label="RC car throttle">
-				<button id="rc-car-forward" class="rc-drive-button" type="button" data-drive="forward">Forward</button>
-				<button id="rc-car-back" class="rc-drive-button" type="button" data-drive="back">Reverse</button>
+				<button id="rc-car-forward" class="rc-drive-button" type="button" data-drive="forward">Reverse</button>
+				<button id="rc-car-back" class="rc-drive-button" type="button" data-drive="back">Forward</button>
 			</div>
 
 			<div id="rc-car-drive-right" class="rc-car-drive-panel" aria-label="RC car steering">
@@ -942,40 +942,66 @@
 			function setupRcCarControls() {
 
 				const buttons = document.querySelectorAll( '.rc-car-drive-panel .rc-drive-button' );
+				const heldPointersByButton = new WeakMap();
 
-				function setDrive( key, active ) {
+				function syncDriveState( button, key ) {
 
 					if ( ! rcCarDriveInput ) return;
 
-					rcCarDriveInput[ key ] = active;
+					const heldPointers = heldPointersByButton.get( button );
+					rcCarDriveInput[ key ] = heldPointers ? heldPointers.size > 0 : false;
 
 				}
 
 				for ( const button of buttons ) {
 
 					const key = button.dataset.drive;
+					const heldPointers = new Set();
+					heldPointersByButton.set( button, heldPointers );
 
 					const press = ( event ) => {
 
 						event.preventDefault();
 						event.stopPropagation();
-						button.classList.add( 'pressed' );
-						setDrive( key, true );
+						heldPointers.add( event.pointerId );
+
+						if ( heldPointers.size === 1 ) {
+
+							button.setPointerCapture( event.pointerId );
+							button.classList.add( 'pressed' );
+
+						}
+
+						syncDriveState( button, key );
 
 					};
 
 					const release = ( event ) => {
 
+						if ( ! heldPointers.has( event.pointerId ) ) return;
+
 						event.preventDefault();
 						event.stopPropagation();
-						button.classList.remove( 'pressed' );
-						setDrive( key, false );
+						heldPointers.delete( event.pointerId );
+
+						if ( heldPointers.size === 0 ) {
+
+							button.classList.remove( 'pressed' );
+
+							if ( button.hasPointerCapture( event.pointerId ) ) {
+
+								button.releasePointerCapture( event.pointerId );
+
+							}
+
+						}
+
+						syncDriveState( button, key );
 
 					};
 
 					button.addEventListener( 'pointerdown', press );
 					button.addEventListener( 'pointerup', release );
-					button.addEventListener( 'pointerleave', release );
 					button.addEventListener( 'pointercancel', release );
 
 				}
@@ -1322,6 +1348,7 @@
 				group.add( lip );
 
 				group.userData.disposables = [ rampGeo, lipGeo, rampMat, stripeMat ];
+				group.userData.sceneryType = 'ramp';
 
 				return group;
 
@@ -3331,6 +3358,13 @@
 				const label = 'RC Car';
 				const DRIVE_SPEED = 0.72;
 				const TURN_SPEED = 2.4;
+				const CAR_RADIUS = 0.14;
+				const CAR_BOTTOM_OFFSET = 0.024;
+				const TREE_COLLISION_RADIUS = 0.42;
+				const RAMP_HALF_W = 0.22;
+				const RAMP_HALF_L = 0.27;
+				const RAMP_SURFACE_Y_LOW = 0.04;
+				const RAMP_SURFACE_Y_HIGH = 0.13;
 				const HUD_PLACING = 'Point at the floor to place your RC car';
 				const HUD_DRIVING = 'Tap the floor to place trees or ramps · Left: drive · Right: steer';
 
@@ -3390,6 +3424,7 @@
 					let lastFrameTime = 0;
 					let hasHitPose = false;
 					let pendingSceneryPlace = false;
+					let baseFloorY = 0;
 					const placedScenery = [];
 
 					const rcCarHud = document.getElementById( 'rc-car-hud' );
@@ -3404,6 +3439,9 @@
 					const spawnMatrix = new THREE.Matrix4();
 					const lastValidPos = new THREE.Vector3();
 					const moveDelta = new THREE.Vector3();
+					const carTestPos = new THREE.Vector3();
+					const sceneryLocal = new THREE.Vector3();
+					const scenerySurfaceLocal = new THREE.Vector3();
 
 					function getViewCamera() {
 
@@ -3496,8 +3534,118 @@
 
 						}
 
+						object.userData.sceneryType = object.userData.sceneryType || 'tree';
+
+						if ( object.userData.sceneryType === 'tree' ) {
+
+							object.userData.collisionRadius = TREE_COLLISION_RADIUS;
+
+						}
+
+						object.updateMatrixWorld( true );
 						scene.add( object );
 						placedScenery.push( object );
+
+					}
+
+					function getRampSurfaceLocalY( localX, localZ ) {
+
+						if ( Math.abs( localX ) > RAMP_HALF_W || Math.abs( localZ ) > RAMP_HALF_L ) return null;
+
+						const t = ( localZ + RAMP_HALF_L ) / ( RAMP_HALF_L * 2 );
+
+						return THREE.MathUtils.lerp( RAMP_SURFACE_Y_LOW, RAMP_SURFACE_Y_HIGH, t );
+
+					}
+
+					function rampWorldSurfaceY( worldPos, ramp ) {
+
+						sceneryLocal.copy( worldPos );
+						ramp.worldToLocal( sceneryLocal );
+
+						const localSurfaceY = getRampSurfaceLocalY( sceneryLocal.x, sceneryLocal.z );
+
+						if ( localSurfaceY === null ) return null;
+
+						scenerySurfaceLocal.set( sceneryLocal.x, localSurfaceY, sceneryLocal.z );
+						ramp.localToWorld( scenerySurfaceLocal );
+
+						return scenerySurfaceLocal.y;
+
+					}
+
+					function collidesWithTree( worldPos, tree ) {
+
+						sceneryLocal.copy( worldPos );
+						tree.worldToLocal( sceneryLocal );
+						sceneryLocal.y = 0;
+
+						const radius = tree.userData.collisionRadius || TREE_COLLISION_RADIUS;
+						const distSq = sceneryLocal.x * sceneryLocal.x + sceneryLocal.z * sceneryLocal.z;
+						const limit = radius + CAR_RADIUS;
+
+						return distSq < limit * limit;
+
+					}
+
+					function isBlockedByRamp( worldPos, ramp ) {
+
+						const surfaceWorldY = rampWorldSurfaceY( worldPos, ramp );
+
+						if ( surfaceWorldY === null ) return false;
+
+						const carBottomY = worldPos.y - CAR_BOTTOM_OFFSET;
+
+						return carBottomY < surfaceWorldY - 0.03;
+
+					}
+
+					function resolveGroundY( worldX, worldZ, referenceY ) {
+
+						let groundY = baseFloorY;
+
+						carTestPos.set( worldX, referenceY, worldZ );
+
+						for ( const scenery of placedScenery ) {
+
+							if ( scenery.userData.sceneryType !== 'ramp' ) continue;
+
+							const rampY = rampWorldSurfaceY( carTestPos, scenery );
+
+							if ( rampY !== null ) groundY = Math.max( groundY, rampY );
+
+						}
+
+						return groundY + CAR_BOTTOM_OFFSET;
+
+					}
+
+					function wouldCollideAt( worldPos ) {
+
+						for ( const scenery of placedScenery ) {
+
+							if ( scenery.userData.sceneryType === 'tree' && collidesWithTree( worldPos, scenery ) ) {
+
+								return true;
+
+							}
+
+							if ( scenery.userData.sceneryType === 'ramp' && isBlockedByRamp( worldPos, scenery ) ) {
+
+								return true;
+
+							}
+
+						}
+
+						return false;
+
+					}
+
+					function applyCarPosition( worldPos ) {
+
+						carGroup.position.copy( worldPos );
+						lastValidPos.copy( worldPos );
 
 					}
 
@@ -3560,6 +3708,9 @@
 							carGroup.position.y = roomBounds.floorY;
 
 						}
+
+						baseFloorY = roomBounds ? roomBounds.floorY : hitPos.y;
+						carGroup.position.y = resolveGroundY( carGroup.position.x, carGroup.position.z, carGroup.position.y );
 
 						scene.add( carGroup );
 						lastValidPos.copy( carGroup.position );
@@ -3627,21 +3778,25 @@
 							else forward.normalize();
 
 							moveDelta.copy( forward ).multiplyScalar( move * DRIVE_SPEED * delta );
-							carGroup.position.add( moveDelta );
 
-							if ( roomBounds ) {
+							carTestPos.copy( carGroup.position ).add( moveDelta );
+							carTestPos.y = resolveGroundY( carTestPos.x, carTestPos.z, carGroup.position.y );
 
-								carGroup.position.y = roomBounds.floorY;
+							let blocked = wouldCollideAt( carTestPos );
 
-								if ( ! roomBounds.containsPoint( carGroup.position ) ) {
+							if ( ! blocked && roomBounds && ! roomBounds.containsPoint( carTestPos ) ) {
 
-									carGroup.position.copy( lastValidPos );
+								blocked = true;
 
-								} else {
+							}
 
-									lastValidPos.copy( carGroup.position );
+							if ( blocked ) {
 
-								}
+								carGroup.position.copy( lastValidPos );
+
+							} else {
+
+								applyCarPosition( carTestPos );
 
 							}
 
@@ -3650,6 +3805,23 @@
 							for ( const wheel of carGroup.userData.wheels ) {
 
 								wheel.rotation.x += spin;
+
+							}
+
+						} else {
+
+							const groundedY = resolveGroundY( carGroup.position.x, carGroup.position.z, carGroup.position.y );
+
+							if ( Math.abs( carGroup.position.y - groundedY ) > 0.001 ) {
+
+								carTestPos.copy( carGroup.position );
+								carTestPos.y = groundedY;
+
+								if ( ! wouldCollideAt( carTestPos ) ) {
+
+									applyCarPosition( carTestPos );
+
+								}
 
 							}
 
