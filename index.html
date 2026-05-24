@@ -528,7 +528,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 12:58</div>
+		<div id="version">version: 13:14</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1136,6 +1136,48 @@
 
 			}
 
+			let roomWallTexture = null;
+			let roomFloorTexture = null;
+			const roomTextureLoader = new THREE.TextureLoader();
+
+			function configureRoomTexture( texture ) {
+
+				texture.colorSpace = THREE.SRGBColorSpace;
+				texture.wrapS = THREE.ClampToEdgeWrapping;
+				texture.wrapT = THREE.ClampToEdgeWrapping;
+				texture.minFilter = THREE.LinearFilter;
+				texture.magFilter = THREE.LinearFilter;
+				texture.repeat.set( 1, 1 );
+				texture.offset.set( 0, 0 );
+
+			}
+
+			function getRoomWallTexture() {
+
+				if ( ! roomWallTexture ) {
+
+					roomWallTexture = roomTextureLoader.load( 'textures/wall.jpg' );
+					configureRoomTexture( roomWallTexture );
+
+				}
+
+				return roomWallTexture;
+
+			}
+
+			function getRoomFloorTexture() {
+
+				if ( ! roomFloorTexture ) {
+
+					roomFloorTexture = roomTextureLoader.load( 'textures/floor.jpg' );
+					configureRoomTexture( roomFloorTexture );
+
+				}
+
+				return roomFloorTexture;
+
+			}
+
 			function buildRoomBoundaryGroup( vertices, wallHeight ) {
 
 				const boundaryGroup = new THREE.Group();
@@ -1146,11 +1188,29 @@
 				const perimeterLine = new THREE.LineLoop( lineGeometry, lineMaterial );
 				boundaryGroup.add( perimeterLine );
 
-				const wallMaterial = new THREE.MeshPhongMaterial( {
-					color: 0x64748b,
-					transparent: true,
-					opacity: 0.82
+				const floorShape = new THREE.Shape();
+				for ( let i = 0; i < vertices.length; i ++ ) {
+
+					const vertex = vertices[ i ];
+
+					if ( i === 0 ) floorShape.moveTo( vertex.x, vertex.z );
+					else floorShape.lineTo( vertex.x, vertex.z );
+
+				}
+
+				floorShape.closePath();
+
+				const floorGeometry = new THREE.ShapeGeometry( floorShape );
+				floorGeometry.rotateX( - Math.PI / 2 );
+				const floorMaterial = new THREE.MeshPhongMaterial( {
+					map: getRoomFloorTexture(),
+					side: THREE.DoubleSide
 				} );
+				const floorMesh = new THREE.Mesh( floorGeometry, floorMaterial );
+				floorMesh.position.y = floorY + 0.01;
+				floorMesh.userData.isRoomFloor = true;
+				boundaryGroup.add( floorMesh );
+
 				const wallThickness = 0.06;
 				const edgeDir = new THREE.Vector3();
 				const edgeMid = new THREE.Vector3();
@@ -1173,7 +1233,11 @@
 
 					const wall = new THREE.Mesh(
 						new THREE.BoxGeometry( length, wallHeight, wallThickness ),
-						wallMaterial
+						new THREE.MeshPhongMaterial( {
+							map: getRoomWallTexture(),
+							transparent: true,
+							opacity: 0.95
+						} )
 					);
 					wall.position.set( edgeMid.x, floorY + wallHeight / 2, edgeMid.z );
 					wall.quaternion.copy( wallQuat );
@@ -3097,8 +3161,6 @@
 					const bounceControls = document.getElementById( 'bounce-controls' );
 					const bounceSound = new Audio( 'sounds/bounce.mp3' );
 					bounceSound.preload = 'auto';
-					let serveWallTexture = null;
-					const serveWallTextureLoader = new THREE.TextureLoader();
 
 					function preventOverlaySelect( event ) {
 
@@ -3160,63 +3222,21 @@
 
 					}
 
-					function disposeServeWallMaterial( mesh ) {
-
-						if ( mesh.userData._serveWallMaterial ) {
-
-							mesh.userData._serveWallMaterial.dispose();
-							delete mesh.userData._serveWallMaterial;
-
-						}
-
-					}
-
-					function ensureServeWallTexture() {
-
-						if ( serveWallTexture ) return;
-
-						serveWallTexture = serveWallTextureLoader.load( 'textures/wall.jpg' );
-						serveWallTexture.colorSpace = THREE.SRGBColorSpace;
-						serveWallTexture.wrapS = THREE.ClampToEdgeWrapping;
-						serveWallTexture.wrapT = THREE.ClampToEdgeWrapping;
-						serveWallTexture.minFilter = THREE.LinearFilter;
-						serveWallTexture.magFilter = THREE.LinearFilter;
-
-					}
-
-					function applyServeWallTexture( wall ) {
-
-						ensureServeWallTexture();
-
-						// Stretch one image across the wall face (length × height from room-scale geometry).
-						serveWallTexture.repeat.set( 1, 1 );
-						serveWallTexture.offset.set( 0, 0 );
-						serveWallTexture.needsUpdate = true;
-
-						const texturedMaterial = new THREE.MeshPhongMaterial( {
-							map: serveWallTexture
-						} );
-
-						wall.mesh.material = texturedMaterial;
-						wall.mesh.userData._serveWallMaterial = texturedMaterial;
-
-					}
-
-					function restoreRoomWallMaterials() {
+					function highlightSelectedServeWall( wall ) {
 
 						if ( ! roomBounds || ! roomBounds.walls ) return;
 
-						for ( const wall of roomBounds.walls ) {
+						for ( const entry of roomBounds.walls ) {
 
-							if ( ! wall.mesh ) continue;
+							if ( ! entry.mesh || ! entry.mesh.material || ! entry.mesh.material.emissive ) continue;
 
-							disposeServeWallMaterial( wall.mesh );
+							entry.mesh.material.emissive.setHex( 0x000000 );
 
-							if ( wall.mesh.userData._origMaterial ) {
+						}
 
-								wall.mesh.material = wall.mesh.userData._origMaterial;
+						if ( wall && wall.mesh && wall.mesh.material && wall.mesh.material.emissive ) {
 
-							}
+							wall.mesh.material.emissive.setHex( 0x3d7a46 );
 
 						}
 
@@ -3226,14 +3246,7 @@
 
 						if ( ! wall || ! wall.mesh ) return;
 
-						if ( wall.mesh.userData._origMaterial === undefined ) {
-
-							wall.mesh.userData._origMaterial = wall.mesh.material;
-
-						}
-
-						restoreRoomWallMaterials();
-						applyServeWallTexture( wall );
+						highlightSelectedServeWall( wall );
 
 						selectedRoomWallIndex = wall.index;
 						selectedRoomWall = wall;
@@ -3727,14 +3740,7 @@
 							disposeCourt();
 							disposeRoomBall();
 							courtSpawned = false;
-							restoreRoomWallMaterials();
-
-							if ( serveWallTexture ) {
-
-								serveWallTexture.dispose();
-								serveWallTexture = null;
-
-							}
+							highlightSelectedServeWall( null );
 
 							bounceSound.pause();
 							bounceSound.currentTime = 0;
