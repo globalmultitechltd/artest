@@ -83,13 +83,47 @@
 
 			#room-scale-persistence {
 				display: none;
-				flex-direction: row;
-				gap: 12px;
+				flex-direction: column;
+				gap: 10px;
 				width: min(92vw, 340px);
 			}
 
 			#room-scale-persistence.visible {
 				display: flex;
+			}
+
+			#room-scale-persistence label {
+				font-family: system-ui, sans-serif;
+				font-size: 11px;
+				font-weight: 600;
+				letter-spacing: 0.04em;
+				text-transform: uppercase;
+				color: rgba(255, 255, 255, 0.75);
+			}
+
+			#room-scale-preset-name,
+			#room-scale-preset-select {
+				width: 100%;
+				padding: 12px 14px;
+				font-family: system-ui, sans-serif;
+				font-size: 15px;
+				font-weight: 600;
+				color: #fff;
+				background: rgba(30, 41, 59, 0.95);
+				border: 2px solid rgba(255, 255, 255, 0.35);
+				border-radius: 10px;
+				box-sizing: border-box;
+			}
+
+			#room-scale-preset-select {
+				appearance: none;
+				cursor: pointer;
+			}
+
+			#room-scale-persistence-row {
+				display: flex;
+				gap: 10px;
+				width: 100%;
 			}
 
 			#room-scale-persistence button {
@@ -888,7 +922,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 17:40</div>
+		<div id="version">version: 18:09</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -906,8 +940,18 @@
 			<div id="home-actions">
 				<button id="setup-room-scale-btn" type="button">Setup room scale</button>
 				<div id="room-scale-persistence" class="hidden" aria-label="Room scale storage">
-					<button id="save-room-scale-btn" type="button" disabled>Save room scale</button>
-					<button id="load-room-scale-btn" type="button" disabled>Load room scale</button>
+					<label for="room-scale-preset-name">Preset name</label>
+					<input id="room-scale-preset-name" type="text" maxlength="64" placeholder="e.g. room1, outside, hall" autocomplete="off" spellcheck="false" />
+					<div id="room-scale-persistence-row">
+						<button id="save-room-scale-btn" type="button" disabled>Save room scale</button>
+					</div>
+					<label for="room-scale-preset-select">Saved presets</label>
+					<select id="room-scale-preset-select" aria-label="Choose room scale preset" disabled>
+						<option value="">No saved presets</option>
+					</select>
+					<div id="room-scale-persistence-row">
+						<button id="load-room-scale-btn" type="button" disabled>Load room scale</button>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -1039,7 +1083,8 @@
 
 			const miniGames = {};
 			const AR_START_LABEL = 'START AR MINI GAME';
-			const ROOM_SCALE_STORAGE_KEY = 'artest-room-scale-v1';
+			const ROOM_SCALE_STORAGE_KEY = 'artest-room-scale-v2';
+			const ROOM_SCALE_STORAGE_KEY_LEGACY = 'artest-room-scale-v1';
 			const BLOCK_SIZE = 0.2;
 
 			const miniGameMusic = new Audio( 'sounds/music.mp3' );
@@ -1414,82 +1459,111 @@
 
 			}
 
-			function hasPersistedRoomScale() {
+			function normalizeRoomScalePresetName( name ) {
 
-				try {
+				if ( typeof name !== 'string' ) return '';
 
-					return !! localStorage.getItem( ROOM_SCALE_STORAGE_KEY );
+				const trimmed = name.trim();
+				if ( ! trimmed ) return '';
 
-				} catch {
-
-					return false;
-
-				}
+				return trimmed.slice( 0, 64 );
 
 			}
 
 			function serializeRoomBounds( bounds ) {
 
-				return JSON.stringify( {
+				return {
 					wallHeight: bounds.wallHeight,
 					vertices: bounds.vertices.map( ( vertex ) => ( {
 						x: vertex.x,
 						y: vertex.y,
 						z: vertex.z
 					} ) )
-				} );
+				};
 
 			}
 
-			function parsePersistedRoomScale() {
+			function parseRoomBoundsData( data ) {
+
+				if ( ! data || ! Array.isArray( data.vertices ) || data.vertices.length < 3 ) return null;
+				if ( typeof data.wallHeight !== 'number' || ! Number.isFinite( data.wallHeight ) ) return null;
+
+				const vertices = data.vertices.map( ( vertex ) => {
+
+					if (
+						typeof vertex.x !== 'number' || ! Number.isFinite( vertex.x ) ||
+						typeof vertex.y !== 'number' || ! Number.isFinite( vertex.y ) ||
+						typeof vertex.z !== 'number' || ! Number.isFinite( vertex.z )
+					) {
+
+						return null;
+
+					}
+
+					return new THREE.Vector3( vertex.x, vertex.y, vertex.z );
+
+				} );
+
+				if ( vertices.some( ( vertex ) => vertex === null ) ) return null;
+
+				return {
+					vertices,
+					wallHeight: data.wallHeight
+				};
+
+			}
+
+			function readRoomScaleStorage() {
 
 				try {
 
 					const raw = localStorage.getItem( ROOM_SCALE_STORAGE_KEY );
-					if ( ! raw ) return null;
+					if ( raw ) {
 
-					const data = JSON.parse( raw );
-					if ( ! data || ! Array.isArray( data.vertices ) || data.vertices.length < 3 ) return null;
-					if ( typeof data.wallHeight !== 'number' || ! Number.isFinite( data.wallHeight ) ) return null;
+						const data = JSON.parse( raw );
+						if ( data && data.presets && typeof data.presets === 'object' ) {
 
-					const vertices = data.vertices.map( ( vertex ) => {
-
-						if (
-							typeof vertex.x !== 'number' || ! Number.isFinite( vertex.x ) ||
-							typeof vertex.y !== 'number' || ! Number.isFinite( vertex.y ) ||
-							typeof vertex.z !== 'number' || ! Number.isFinite( vertex.z )
-						) {
-
-							return null;
+							return {
+								presets: data.presets,
+								lastPreset: typeof data.lastPreset === 'string' ? data.lastPreset : null
+							};
 
 						}
 
-						return new THREE.Vector3( vertex.x, vertex.y, vertex.z );
+					}
 
-					} );
+					const legacyRaw = localStorage.getItem( ROOM_SCALE_STORAGE_KEY_LEGACY );
+					if ( legacyRaw ) {
 
-					if ( vertices.some( ( vertex ) => vertex === null ) ) return null;
+						const legacyBounds = parseRoomBoundsData( JSON.parse( legacyRaw ) );
+						if ( legacyBounds ) {
 
-					return {
-						vertices,
-						wallHeight: data.wallHeight
-					};
+							const migrated = {
+								presets: { default: serializeRoomBounds( legacyBounds ) },
+								lastPreset: 'default'
+							};
+							localStorage.setItem( ROOM_SCALE_STORAGE_KEY, JSON.stringify( migrated ) );
+							return migrated;
+
+						}
+
+					}
 
 				} catch {
 
-					return null;
+					// fall through to empty storage
 
 				}
 
+				return { presets: {}, lastPreset: null };
+
 			}
 
-			function saveRoomScaleToStorage() {
-
-				if ( ! savedRoomBounds ) return false;
+			function writeRoomScaleStorage( storage ) {
 
 				try {
 
-					localStorage.setItem( ROOM_SCALE_STORAGE_KEY, serializeRoomBounds( savedRoomBounds ) );
+					localStorage.setItem( ROOM_SCALE_STORAGE_KEY, JSON.stringify( storage ) );
 					return true;
 
 				} catch {
@@ -1500,9 +1574,52 @@
 
 			}
 
-			function loadRoomScaleFromStorage() {
+			function getRoomScalePresetNames() {
 
-				const parsed = parsePersistedRoomScale();
+				return Object.keys( readRoomScaleStorage().presets ).sort( ( a, b ) => a.localeCompare( b ) );
+
+			}
+
+			function hasPersistedRoomScale() {
+
+				return getRoomScalePresetNames().length > 0;
+
+			}
+
+			function parsePersistedRoomScale( presetName ) {
+
+				const name = normalizeRoomScalePresetName( presetName );
+				if ( ! name ) return null;
+
+				try {
+
+					const storage = readRoomScaleStorage();
+					return parseRoomBoundsData( storage.presets[ name ] );
+
+				} catch {
+
+					return null;
+
+				}
+
+			}
+
+			function saveRoomScaleToStorage( presetName ) {
+
+				const name = normalizeRoomScalePresetName( presetName );
+				if ( ! name || ! savedRoomBounds ) return false;
+
+				const storage = readRoomScaleStorage();
+				storage.presets[ name ] = serializeRoomBounds( savedRoomBounds );
+				storage.lastPreset = name;
+
+				return writeRoomScaleStorage( storage );
+
+			}
+
+			function loadRoomScaleFromStorage( presetName ) {
+
+				const parsed = parsePersistedRoomScale( presetName );
 				if ( ! parsed ) return false;
 
 				savedRoomBounds = {
@@ -1514,7 +1631,50 @@
 				const roomScaleCheckbox = document.getElementById( 'room-scale-checkbox' );
 				if ( roomScaleCheckbox ) roomScaleCheckbox.checked = true;
 
+				const storage = readRoomScaleStorage();
+				storage.lastPreset = normalizeRoomScalePresetName( presetName );
+				writeRoomScaleStorage( storage );
+
 				return true;
+
+			}
+
+			function updateRoomScalePresetSelect( select, { preferredName = null } = {} ) {
+
+				if ( ! select ) return;
+
+				const presetNames = getRoomScalePresetNames();
+				const storage = readRoomScaleStorage();
+				const currentValue = select.value;
+				let selectedName = preferredName || currentValue || storage.lastPreset || '';
+
+				if ( selectedName && ! presetNames.includes( selectedName ) ) selectedName = presetNames[ 0 ] || '';
+
+				select.replaceChildren();
+
+				if ( presetNames.length === 0 ) {
+
+					const emptyOption = document.createElement( 'option' );
+					emptyOption.value = '';
+					emptyOption.textContent = 'No saved presets';
+					select.appendChild( emptyOption );
+					select.value = '';
+					select.disabled = true;
+					return;
+
+				}
+
+				for ( const presetName of presetNames ) {
+
+					const option = document.createElement( 'option' );
+					option.value = presetName;
+					option.textContent = presetName;
+					select.appendChild( option );
+
+				}
+
+				select.value = selectedName || presetNames[ 0 ];
+				select.disabled = false;
 
 			}
 
@@ -1523,6 +1683,8 @@
 				const container = document.getElementById( 'room-scale-persistence' );
 				const saveBtn = document.getElementById( 'save-room-scale-btn' );
 				const loadBtn = document.getElementById( 'load-room-scale-btn' );
+				const nameInput = document.getElementById( 'room-scale-preset-name' );
+				const presetSelect = document.getElementById( 'room-scale-preset-select' );
 				if ( ! container || ! saveBtn || ! loadBtn ) return;
 
 				const hasCurrentBounds = !! savedRoomBounds;
@@ -1531,8 +1693,14 @@
 
 				container.classList.toggle( 'visible', showPersistence );
 				container.classList.toggle( 'hidden', ! showPersistence );
-				saveBtn.disabled = ! hasCurrentBounds;
-				loadBtn.disabled = ! hasStoredBounds;
+
+				updateRoomScalePresetSelect( presetSelect );
+
+				const presetName = normalizeRoomScalePresetName( nameInput ? nameInput.value : '' );
+				const selectedPreset = presetSelect ? presetSelect.value : '';
+
+				saveBtn.disabled = ! hasCurrentBounds || ! presetName;
+				loadBtn.disabled = ! selectedPreset;
 
 			}
 
@@ -1584,15 +1752,42 @@
 
 				const saveRoomScaleBtn = document.getElementById( 'save-room-scale-btn' );
 				const loadRoomScaleBtn = document.getElementById( 'load-room-scale-btn' );
+				const roomScalePresetNameInput = document.getElementById( 'room-scale-preset-name' );
+				const roomScalePresetSelect = document.getElementById( 'room-scale-preset-select' );
+
+				if ( roomScalePresetNameInput ) {
+
+					roomScalePresetNameInput.addEventListener( 'input', () => {
+
+						updateRoomScalePersistenceUI();
+
+					} );
+
+				}
+
+				if ( roomScalePresetSelect ) {
+
+					roomScalePresetSelect.addEventListener( 'change', () => {
+
+						updateRoomScalePersistenceUI();
+
+					} );
+
+				}
 
 				if ( saveRoomScaleBtn ) {
 
 					saveRoomScaleBtn.addEventListener( 'click', () => {
 
-						if ( ! saveRoomScaleToStorage() ) return;
+						const presetName = normalizeRoomScalePresetName(
+							roomScalePresetNameInput ? roomScalePresetNameInput.value : ''
+						);
+						if ( ! presetName || ! saveRoomScaleToStorage( presetName ) ) return;
 
 						const originalLabel = saveRoomScaleBtn.textContent;
 						saveRoomScaleBtn.textContent = 'Saved';
+						updateRoomScalePresetSelect( roomScalePresetSelect, { preferredName: presetName } );
+						if ( roomScalePresetSelect ) roomScalePresetSelect.value = presetName;
 						updateRoomScalePersistenceUI();
 						window.setTimeout( () => {
 
@@ -1608,7 +1803,10 @@
 
 					loadRoomScaleBtn.addEventListener( 'click', () => {
 
-						if ( ! loadRoomScaleFromStorage() ) return;
+						const presetName = roomScalePresetSelect ? roomScalePresetSelect.value : '';
+						if ( ! presetName || ! loadRoomScaleFromStorage( presetName ) ) return;
+
+						if ( roomScalePresetNameInput ) roomScalePresetNameInput.value = presetName;
 
 						const originalLabel = loadRoomScaleBtn.textContent;
 						loadRoomScaleBtn.textContent = 'Loaded';
@@ -1649,6 +1847,13 @@
 						arButton.click();
 
 					} );
+
+				}
+
+				const roomScaleStorage = readRoomScaleStorage();
+				if ( roomScalePresetNameInput && roomScaleStorage.lastPreset && ! roomScalePresetNameInput.value ) {
+
+					roomScalePresetNameInput.value = roomScaleStorage.lastPreset;
 
 				}
 
