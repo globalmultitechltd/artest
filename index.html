@@ -528,7 +528,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:25</div>
+		<div id="version">version: 13:33</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -622,6 +622,25 @@
 			const miniGames = {};
 			const AR_START_LABEL = 'START AR MINI GAME';
 			const BLOCK_SIZE = 0.2;
+
+			const miniGameMusic = new Audio( 'sounds/music.mp3' );
+			miniGameMusic.preload = 'auto';
+			miniGameMusic.loop = true;
+			miniGameMusic.volume = 0.45;
+
+			function playMiniGameMusic() {
+
+				miniGameMusic.currentTime = 0;
+				miniGameMusic.play().catch( () => {} );
+
+			}
+
+			function stopMiniGameMusic() {
+
+				miniGameMusic.pause();
+				miniGameMusic.currentTime = 0;
+
+			}
 
 			init();
 
@@ -935,6 +954,8 @@
 
 				renderer.xr.addEventListener( 'sessionstart', () => {
 
+					playMiniGameMusic();
+
 					homeScreen.classList.add( 'hidden' );
 					miniGameSelect.disabled = true;
 					if ( roomScaleCheckbox ) roomScaleCheckbox.disabled = true;
@@ -971,6 +992,8 @@
 				} );
 
 				renderer.xr.addEventListener( 'sessionend', () => {
+
+					stopMiniGameMusic();
 
 					if ( activeRoomScaleSetup ) {
 
