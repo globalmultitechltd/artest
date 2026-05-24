@@ -48,27 +48,63 @@
 			}
 			#info a { pointer-events: auto; color: #fff; }
 
-			#ARButton {
-				opacity: 1 !important;
-				width: auto !important;
-				min-width: 260px !important;
-				left: 50% !important;
-				transform: translateX(-50%);
-				bottom: 32px !important;
-				padding: 16px 28px !important;
-				font-size: 16px !important;
-				font-weight: 700 !important;
-				letter-spacing: 0.06em;
-				color: #fff !important;
-				background: #2563eb !important;
-				border: 2px solid #fff !important;
-				border-radius: 12px !important;
-				box-shadow: 0 4px 24px rgba(0, 0, 0, 0.45);
+			#home-actions {
+				flex: 1;
+				display: flex;
+				flex-direction: column;
+				align-items: center;
+				justify-content: center;
+				gap: 18px;
+				padding: 24px 20px 48px;
+				pointer-events: auto;
 			}
 
-			#ARButton:active {
+			#setup-room-scale-btn {
+				min-width: min(92vw, 340px);
+				padding: 16px 28px;
+				font-family: system-ui, sans-serif;
+				font-size: 16px;
+				font-weight: 700;
+				letter-spacing: 0.04em;
+				text-transform: uppercase;
+				color: #fff;
+				background: rgba(15, 23, 42, 0.92);
+				border: 2px solid rgba(255, 255, 255, 0.55);
+				border-radius: 14px;
+				box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+				cursor: pointer;
+				touch-action: manipulation;
+			}
+
+			#setup-room-scale-btn:active {
+				background: rgba(30, 41, 59, 0.95);
+				transform: scale(0.98);
+			}
+
+			#home-actions #ARButton {
+				position: static !important;
+				opacity: 1 !important;
+				width: auto !important;
+				min-width: min(92vw, 340px) !important;
+				left: auto !important;
+				bottom: auto !important;
+				transform: none !important;
+				padding: 22px 36px !important;
+				font-size: 18px !important;
+				font-weight: 800 !important;
+				letter-spacing: 0.07em;
+				color: #fff !important;
+				background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%) !important;
+				border: 3px solid #fff !important;
+				border-radius: 16px !important;
+				box-shadow: 0 8px 32px rgba(37, 99, 235, 0.55), 0 4px 24px rgba(0, 0, 0, 0.45);
+				cursor: pointer;
+				touch-action: manipulation;
+			}
+
+			#home-actions #ARButton:active {
 				background: #1d4ed8 !important;
-				transform: translateX(-50%) scale(0.98);
+				transform: scale(0.98) !important;
 			}
 
 			#home-screen {
@@ -86,7 +122,11 @@
 
 			#mini-game-picker {
 				pointer-events: auto;
-				margin: 60px 16px 0;
+				position: absolute;
+				top: 52px;
+				left: 16px;
+				right: 16px;
+				margin: 0;
 				padding: 14px 16px;
 				background: rgba(0, 0, 0, 0.85);
 				border: 1px solid rgba(255, 255, 255, 0.25);
@@ -646,7 +686,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 16:13</div>
+		<div id="version">version: 16:27</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -656,6 +696,9 @@
 					<input type="checkbox" id="room-scale-checkbox" />
 					Room scale
 				</label>
+			</div>
+			<div id="home-actions">
+				<button id="setup-room-scale-btn" type="button">Setup room scale</button>
 			</div>
 		</div>
 
@@ -751,6 +794,7 @@
 			let selectedMiniGameId = 'world-builder';
 			let roomScaleEnabled = false;
 			let savedRoomBounds = null;
+			let standaloneRoomScaleSetup = false;
 			let selectedWorldBuilderSpawnType = 'tree';
 			let paintCommands = null;
 			let rcCarDriveInput = null;
@@ -1065,10 +1109,31 @@
 				}
 
 				const arButton = document.getElementById( 'ARButton' );
-				if ( arButton ) {
+				const homeActions = document.getElementById( 'home-actions' );
+				const setupRoomScaleBtn = document.getElementById( 'setup-room-scale-btn' );
+
+				if ( arButton && homeActions ) {
 
 					arButton.style.pointerEvents = 'auto';
+					homeActions.appendChild( arButton );
 					customizeARButtonLabel( arButton );
+
+					arButton.addEventListener( 'click', ( event ) => {
+
+						if ( event.isTrusted ) standaloneRoomScaleSetup = false;
+
+					}, true );
+
+				}
+
+				if ( setupRoomScaleBtn && arButton ) {
+
+					setupRoomScaleBtn.addEventListener( 'click', () => {
+
+						standaloneRoomScaleSetup = true;
+						arButton.click();
+
+					} );
 
 				}
 
@@ -1178,7 +1243,7 @@
 
 				}
 
-				function beginRoomScaleSetup( gameContext ) {
+				function beginRoomScaleSetup( gameContext, { standalone = false } = {} ) {
 
 					roomScaleSetupEl.classList.add( 'visible' );
 					activeRoomScaleSetup = createRoomScaleSetup( {
@@ -1187,16 +1252,30 @@
 						camera,
 						controller1,
 						controller2,
+						standalone,
 						onConfirm( roomBounds ) {
 
 							savedRoomBounds = {
 								vertices: roomBounds.vertices.map( ( vertex ) => vertex.clone() ),
 								wallHeight: roomBounds.wallHeight
 							};
-							gameContext.roomBounds = roomBounds;
 							activeRoomScaleSetup = null;
 							roomScaleSetupEl.classList.remove( 'visible' );
-							startMiniGame( gameContext );
+
+							if ( standalone ) {
+
+								roomScaleEnabled = true;
+								if ( roomScaleCheckbox ) roomScaleCheckbox.checked = true;
+
+								const session = renderer.xr.getSession();
+								if ( session ) session.end();
+
+							} else {
+
+								gameContext.roomBounds = roomBounds;
+								startMiniGame( gameContext );
+
+							}
 
 						}
 					} );
@@ -1206,7 +1285,9 @@
 
 				renderer.xr.addEventListener( 'sessionstart', () => {
 
-					playMiniGameMusic();
+					const isStandaloneRoomScale = standaloneRoomScaleSetup;
+
+					if ( ! isStandaloneRoomScale ) playMiniGameMusic();
 
 					homeScreen.classList.add( 'hidden' );
 					miniGameSelect.disabled = true;
@@ -1221,6 +1302,13 @@
 						controller2,
 						roomBounds: null
 					};
+
+					if ( isStandaloneRoomScale ) {
+
+						beginRoomScaleSetup( gameContext, { standalone: true } );
+						return;
+
+					}
 
 					if ( roomScaleEnabled ) {
 
@@ -1283,6 +1371,7 @@
 						button.classList.remove( 'pressed' );
 
 					}
+					standaloneRoomScaleSetup = false;
 					homeScreen.classList.remove( 'hidden' );
 					miniGameSelect.disabled = false;
 					if ( roomScaleCheckbox ) roomScaleCheckbox.disabled = false;
@@ -1800,7 +1889,7 @@
 
 			}
 
-			function createRoomScaleSetup( { scene, renderer, camera, controller1, controller2, onConfirm } ) {
+			function createRoomScaleSetup( { scene, renderer, camera, controller1, controller2, onConfirm, standalone = false } ) {
 
 				let hitTestSource = null;
 				let hitTestSourceRequested = false;
@@ -1845,7 +1934,9 @@
 
 					} else {
 
-						hud.textContent = 'Adjust wall height, then confirm room scale to start the mini game.';
+						hud.textContent = standalone
+							? 'Adjust wall height, then confirm room scale to return home.'
+							: 'Adjust wall height, then confirm room scale to start the mini game.';
 						finishBtn.classList.add( 'hidden' );
 						heightControl.classList.add( 'visible' );
 						confirmBtn.classList.remove( 'hidden' );
