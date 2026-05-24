@@ -888,7 +888,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 17:38</div>
+		<div id="version">version: 17:40</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -919,7 +919,7 @@
 		<div id="shooter-hud">Tap anywhere to shoot</div>
 		<div id="shooter-crosshair" aria-hidden="true"></div>
 		<div id="maze-hud">Walk through the maze to the green exit</div>
-		<div id="collect-items-hud">Level 1 · Collect all rings</div>
+		<div id="collect-items-hud">Level 1 · Collect all items</div>
 		<div id="zombies-hud">Stand up straight in the middle of the play area, then tap to calibrate</div>
 		<div id="rc-car-hud">Point at the floor to place your RC car</div>
 		<div id="platforms-hud">Jump across platforms to reach the green exit on the far wall</div>
@@ -5948,18 +5948,51 @@
 				const MIN_HEIGHT_ABOVE_FLOOR = 0.45;
 				const MAX_SPAWN_ATTEMPTS = 48;
 
-				function colorForRingIndex( index ) {
+				const ITEM_SHAPE_COUNT = 5;
+
+				function randomItemColor() {
 
 					const color = new THREE.Color();
-					color.setHSL( ( index * 0.137508 ) % 1, 0.82, 0.58 );
+					color.setHSL( Math.random(), 0.78 + Math.random() * 0.18, 0.48 + Math.random() * 0.14 );
 					return color;
 
 				}
 
-				function buildRingMesh( colorIndex ) {
+				function buildStarGeometry( size ) {
+
+					const outer = size;
+					const inner = size * 0.42;
+					const shape = new THREE.Shape();
+					const spikes = 5;
+
+					for ( let i = 0; i < spikes * 2; i ++ ) {
+
+						const radius = ( i % 2 === 0 ) ? outer : inner;
+						const angle = ( i / ( spikes * 2 ) ) * Math.PI * 2 - Math.PI / 2;
+						const x = Math.cos( angle ) * radius;
+						const y = Math.sin( angle ) * radius;
+
+						if ( i === 0 ) shape.moveTo( x, y );
+						else shape.lineTo( x, y );
+
+					}
+
+					shape.closePath();
+
+					const geo = new THREE.ExtrudeGeometry( shape, {
+						depth: size * 0.35,
+						bevelEnabled: false
+					} );
+					geo.center();
+
+					return geo;
+
+				}
+
+				function buildItemMesh() {
 
 					const group = new THREE.Group();
-					const color = colorForRingIndex( colorIndex );
+					const color = randomItemColor();
 					const emissive = color.clone().multiplyScalar( 0.28 );
 					const mat = new THREE.MeshPhongMaterial( {
 						color,
@@ -5967,11 +6000,37 @@
 						shininess: 75,
 						side: THREE.DoubleSide
 					} );
-					const geo = new THREE.TorusGeometry( 0.2, 0.03, 12, 32 );
+					const shapeType = Math.floor( Math.random() * ITEM_SHAPE_COUNT );
+					const size = 0.22;
+					let geo;
+
+					switch ( shapeType ) {
+
+						case 0:
+							geo = new THREE.BoxGeometry( size, size, size );
+							break;
+						case 1:
+							geo = new THREE.SphereGeometry( size * 0.55, 16, 16 );
+							break;
+						case 2:
+							geo = new THREE.ConeGeometry( size * 0.55, size * 1.05, 16 );
+							break;
+						case 3:
+							geo = new THREE.OctahedronGeometry( size * 0.62, 0 );
+							break;
+						default:
+							geo = buildStarGeometry( size * 0.85 );
+
+					}
+
 					const mesh = new THREE.Mesh( geo, mat );
-					mesh.rotation.y = Math.PI / 2;
 					group.add( mesh );
 					group.userData.disposables = [ geo, mat ];
+					group.userData.spin = new THREE.Vector3(
+						( Math.random() - 0.5 ) * 4,
+						RING_SPIN_SPEED * ( 0.7 + Math.random() * 0.6 ),
+						( Math.random() - 0.5 ) * 4
+					);
 
 					return group;
 
@@ -5984,7 +6043,6 @@
 					let sessionStartTime = 0;
 					let playReady = false;
 					let currentLevel = 1;
-					let ringColorSeed = 0;
 					let floorY = 0;
 					let playMinY = 0;
 					let playMaxY = 0;
@@ -6044,7 +6102,7 @@
 						const remaining = rings.length;
 						collectItemsHud.textContent =
 							'Level ' + currentLevel + ' · ' + remaining + ' of ' + currentLevel +
-							' ring' + ( currentLevel === 1 ? '' : 's' ) + ' left';
+							' item' + ( remaining === 1 ? '' : 's' ) + ' left';
 
 					}
 
@@ -6186,7 +6244,7 @@
 
 							if ( ! positioned ) randomPlayPosition( spawnPos );
 
-							const ring = buildRingMesh( ringColorSeed ++ );
+							const ring = buildItemMesh();
 							ring.position.copy( spawnPos );
 							scene.add( ring );
 							rings.push( ring );
@@ -6279,7 +6337,19 @@
 
 						for ( const ring of rings ) {
 
-							ring.rotation.y += RING_SPIN_SPEED * delta;
+							const spin = ring.userData.spin;
+
+							if ( spin ) {
+
+								ring.rotation.x += spin.x * delta;
+								ring.rotation.y += spin.y * delta;
+								ring.rotation.z += spin.z * delta;
+
+							} else {
+
+								ring.rotation.y += RING_SPIN_SPEED * delta;
+
+							}
 
 						}
 
@@ -6295,7 +6365,6 @@
 							lastFrameTime = 0;
 							playReady = false;
 							currentLevel = 1;
-							ringColorSeed = 0;
 							clearRings();
 							updateHud();
 
