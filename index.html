@@ -1136,7 +1136,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 23:04</div>
+		<div id="version">version: 23:13</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1304,6 +1304,7 @@
 			miniGameMusic.preload = 'auto';
 			miniGameMusic.loop = true;
 			miniGameMusic.volume = 0.45;
+			let activeMiniGameMusicTrack = null;
 			let pendingSessionMode = 'xr';
 			let activeSessionMode = 'none';
 			let realXRGetSession = null;
@@ -1352,6 +1353,19 @@
 			}
 
 			function playMiniGameMusic() {
+
+				const track = selectedMiniGameId === 'zombies'
+					? 'sounds/zombie/horror_music.mp3'
+					: 'sounds/music.mp3';
+
+				if ( activeMiniGameMusicTrack !== track ) {
+
+					miniGameMusic.pause();
+					miniGameMusic.src = track;
+					miniGameMusic.load();
+					activeMiniGameMusicTrack = track;
+
+				}
 
 				miniGameMusic.currentTime = 0;
 				miniGameMusic.play().catch( () => {} );
@@ -8125,6 +8139,8 @@
 				const DEFAULT_ZOMBIE_SPEED = 0.45;
 				const STARTING_LIVES = 5;
 				const HIT_COOLDOWN_SEC = 1.5;
+				const GROAN_MIN_INTERVAL = 4;
+				const GROAN_MAX_INTERVAL = 11;
 
 				function create( { scene, renderer, camera, roomBounds } ) {
 
@@ -8178,8 +8194,19 @@
 					const shooterCrosshair = document.getElementById( 'shooter-crosshair' );
 					const gunSound = new Audio( 'sounds/gun.mp3' );
 					gunSound.preload = 'auto';
-					const zombieSound = new Audio( 'sounds/zombie.mp3' );
-					zombieSound.preload = 'auto';
+					const zombieHurtSounds = [
+						new Audio( 'sounds/zombie/hurt1.WAV' ),
+						new Audio( 'sounds/zombie/hurt2.WAV' )
+					];
+					const zombieDeadSound = new Audio( 'sounds/zombie/dead.WAV' );
+					const zombieGroanSounds = [
+						new Audio( 'sounds/zombie/groan1.WAV' ),
+						new Audio( 'sounds/zombie/groan2.WAV' ),
+						new Audio( 'sounds/zombie/groan3.mp3' )
+					];
+					for ( const sound of zombieHurtSounds ) sound.preload = 'auto';
+					zombieDeadSound.preload = 'auto';
+					for ( const sound of zombieGroanSounds ) sound.preload = 'auto';
 					const lifeLostSound = new Audio( 'sounds/life lost music.mp3' );
 					lifeLostSound.preload = 'auto';
 
@@ -8324,8 +8351,15 @@
 						group.add( mesh );
 						group.userData.mesh = mesh;
 						group.userData.hitsRemaining = ZOMBIE_HITS_TO_KILL;
+						group.userData.groanTimer = randomGroanDelay();
 
 						return group;
+
+					}
+
+					function randomGroanDelay() {
+
+						return GROAN_MIN_INTERVAL + Math.random() * ( GROAN_MAX_INTERVAL - GROAN_MIN_INTERVAL );
 
 					}
 
@@ -8556,11 +8590,30 @@
 
 					}
 
+					function playZombieSound( audio ) {
+
+						const clip = audio.cloneNode();
+						clip.volume = 0.9;
+						clip.play().catch( () => {} );
+
+					}
+
 					function playZombieHitSound() {
 
-						const hit = zombieSound.cloneNode();
-						hit.volume = 0.9;
-						hit.play().catch( () => {} );
+						playZombieSound( zombieHurtSounds[ Math.random() < 0.5 ? 0 : 1 ] );
+
+					}
+
+					function playZombieDeadSound() {
+
+						playZombieSound( zombieDeadSound );
+
+					}
+
+					function playZombieGroan() {
+
+						const groan = zombieGroanSounds[ Math.floor( Math.random() * zombieGroanSounds.length ) ];
+						playZombieSound( groan );
 
 					}
 
@@ -8900,9 +8953,17 @@
 
 						const zombie = zombies[ index ];
 						zombie.userData.hitsRemaining --;
-						playZombieHitSound();
 
-						if ( zombie.userData.hitsRemaining <= 0 ) removeZombieAt( index );
+						if ( zombie.userData.hitsRemaining <= 0 ) {
+
+							playZombieDeadSound();
+							removeZombieAt( index );
+
+						} else {
+
+							playZombieHitSound();
+
+						}
 
 					}
 
@@ -9045,6 +9106,15 @@
 
 							}
 
+							zombie.userData.groanTimer -= delta;
+
+							if ( zombie.userData.groanTimer <= 0 ) {
+
+								playZombieGroan();
+								zombie.userData.groanTimer = randomGroanDelay();
+
+							}
+
 						}
 
 					}
@@ -9143,8 +9213,20 @@
 							projectileGeometry.dispose();
 							gunSound.pause();
 							gunSound.currentTime = 0;
-							zombieSound.pause();
-							zombieSound.currentTime = 0;
+							for ( const sound of zombieHurtSounds ) {
+
+								sound.pause();
+								sound.currentTime = 0;
+
+							}
+							zombieDeadSound.pause();
+							zombieDeadSound.currentTime = 0;
+							for ( const sound of zombieGroanSounds ) {
+
+								sound.pause();
+								sound.currentTime = 0;
+
+							}
 							lifeLostSound.pause();
 							lifeLostSound.currentTime = 0;
 							playReady = false;
