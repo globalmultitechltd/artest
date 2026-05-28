@@ -1176,7 +1176,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 23:28</div>
+		<div id="version">version: 23:32</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -8219,6 +8219,10 @@
 				const GROAN_MIN_INTERVAL = 4;
 				const GROAN_MAX_INTERVAL = 11;
 				const ZOMBIES_LEVELS_PER_EXTRA = 5;
+				const ZOMBIE_EYE_PIXELS = [
+					{ x: 273, y: 133 },
+					{ x: 372, y: 133 }
+				];
 
 				function getZombieCountForLevel( level ) {
 
@@ -8303,6 +8307,8 @@
 
 					let sharedZombieGeometry = null;
 					let sharedZombieMaterial = null;
+					let sharedEyeGlowGeometry = null;
+					const eyeGlowMaterialPool = [];
 					const dashSegmentGeometry = new THREE.BoxGeometry( 0.025, 0.025, 0.1 );
 					const projectileGeometry = new THREE.SphereGeometry( 0.035, 8, 8 );
 
@@ -8387,6 +8393,118 @@
 
 					}
 
+					function ensureEyeGlowAssets() {
+
+						if ( sharedEyeGlowGeometry ) return;
+
+						sharedEyeGlowGeometry = new THREE.PlaneGeometry( 0.09, 0.09 );
+
+					}
+
+					function acquireEyeGlowMaterial() {
+
+						ensureEyeGlowAssets();
+						return eyeGlowMaterialPool.pop() || new THREE.MeshBasicMaterial( {
+							color: 0xff2200,
+							transparent: true,
+							opacity: 0.9,
+							blending: THREE.AdditiveBlending,
+							depthWrite: false,
+							side: THREE.DoubleSide
+						} );
+
+					}
+
+					function releaseEyeGlowMaterial( material ) {
+
+						if ( material ) eyeGlowMaterialPool.push( material );
+
+					}
+
+					function getZombiePlaneSize() {
+
+						const img = zombieTexture.image;
+						const imgWidth = ( img && img.width ) ? img.width : 645;
+						const imgHeight = ( img && img.height ) ? img.height : 1214;
+						const planeHeight = playerHeight;
+						const planeWidth = planeHeight * ( imgWidth / imgHeight );
+
+						return { planeWidth, planeHeight, imgWidth, imgHeight };
+
+					}
+
+					function spritePixelToLocal( pixelX, pixelY, target, planeWidth, planeHeight, imgWidth, imgHeight ) {
+
+						target.set(
+							( pixelX / imgWidth - 0.5 ) * planeWidth,
+							( 1 - pixelY / imgHeight ) * planeHeight,
+							0.012
+						);
+
+						return target;
+
+					}
+
+					function addZombieEyeGlows( group ) {
+
+						ensureEyeGlowAssets();
+
+						const { planeWidth, planeHeight, imgWidth, imgHeight } = getZombiePlaneSize();
+						const eyeGlows = [];
+						const eyePos = new THREE.Vector3();
+
+						for ( const eye of ZOMBIE_EYE_PIXELS ) {
+
+							const glow = new THREE.Mesh( sharedEyeGlowGeometry, acquireEyeGlowMaterial() );
+							spritePixelToLocal( eye.x, eye.y, eyePos, planeWidth, planeHeight, imgWidth, imgHeight );
+							glow.position.copy( eyePos );
+							glow.renderOrder = 1;
+							group.add( glow );
+							eyeGlows.push( glow );
+
+						}
+
+						group.userData.eyeGlows = eyeGlows;
+						group.userData.eyePulsePhase = Math.random() * Math.PI * 2;
+
+					}
+
+					function updateZombieEyeGlows( zombie, time ) {
+
+						const eyeGlows = zombie.userData.eyeGlows;
+
+						if ( ! eyeGlows || eyeGlows.length === 0 ) return;
+
+						const pulse = 0.72 + 0.28 * Math.sin( time * 0.009 + zombie.userData.eyePulsePhase );
+						const scale = 0.88 + 0.2 * pulse;
+						const opacity = 0.55 + 0.4 * pulse;
+
+						for ( const glow of eyeGlows ) {
+
+							glow.scale.setScalar( scale );
+							glow.material.opacity = opacity;
+
+						}
+
+					}
+
+					function removeZombieEyeGlows( zombie ) {
+
+						const eyeGlows = zombie.userData.eyeGlows;
+
+						if ( ! eyeGlows ) return;
+
+						for ( const glow of eyeGlows ) {
+
+							glow.parent.remove( glow );
+							releaseEyeGlowMaterial( glow.material );
+
+						}
+
+						zombie.userData.eyeGlows = null;
+
+					}
+
 					function ensureZombieAssets() {
 
 						if ( sharedZombieGeometry ) return;
@@ -8439,6 +8557,7 @@
 						group.userData.mesh = mesh;
 						group.userData.hitsRemaining = ZOMBIE_HITS_TO_KILL;
 						group.userData.groanTimer = randomGroanDelay();
+						addZombieEyeGlows( group );
 
 						return group;
 
@@ -8452,6 +8571,7 @@
 
 					function disposeZombie( zombie ) {
 
+						removeZombieEyeGlows( zombie );
 						scene.remove( zombie );
 
 					}
@@ -9226,6 +9346,8 @@
 
 							}
 
+							updateZombieEyeGlows( zombie, performance.now() );
+
 							zombie.userData.groanTimer -= delta;
 
 							if ( zombie.userData.groanTimer <= 0 ) {
@@ -9340,6 +9462,15 @@
 								sharedZombieMaterial = null;
 
 							}
+
+							if ( sharedEyeGlowGeometry ) {
+
+								sharedEyeGlowGeometry.dispose();
+								sharedEyeGlowGeometry = null;
+
+							}
+
+							for ( const material of eyeGlowMaterialPool.splice( 0 ) ) material.dispose();
 
 							dashSegmentGeometry.dispose();
 							projectileGeometry.dispose();
