@@ -1137,7 +1137,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 23:20</div>
+		<div id="version">version: 23:23</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -8142,6 +8142,13 @@
 				const HIT_COOLDOWN_SEC = 1.5;
 				const GROAN_MIN_INTERVAL = 4;
 				const GROAN_MAX_INTERVAL = 11;
+				const ZOMBIES_LEVELS_PER_EXTRA = 5;
+
+				function getZombieCountForLevel( level ) {
+
+					return Math.max( 1, Math.ceil( level / ZOMBIES_LEVELS_PER_EXTRA ) );
+
+				}
 
 				function create( { scene, renderer, camera, roomBounds } ) {
 
@@ -8528,7 +8535,7 @@
 					function onLevelComplete() {
 
 						currentLevel ++;
-						spawnZombies( currentLevel );
+						spawnZombies( getZombieCountForLevel( currentLevel ) );
 
 					}
 
@@ -8538,7 +8545,7 @@
 						lives = STARTING_LIVES;
 						hitCooldown = 0;
 						clearZombies();
-						spawnZombies( level );
+						spawnZombies( getZombieCountForLevel( level ) );
 						phase = 'playing';
 						updateHud();
 
