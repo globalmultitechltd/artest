@@ -94,6 +94,7 @@
 			}
 
 			#start-sim-ar-btn {
+				display: none;
 				min-width: min(92vw, 340px);
 				padding: 16px 28px;
 				font-family: system-ui, sans-serif;
@@ -108,6 +109,10 @@
 				box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
 				cursor: pointer;
 				touch-action: manipulation;
+			}
+
+			#start-sim-ar-btn.visible {
+				display: block;
 			}
 
 			#start-sim-ar-btn:active {
@@ -1137,7 +1142,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 23:23</div>
+		<div id="version">version: 23:25</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -2521,6 +2526,36 @@
 
 			}
 
+			function updateSimArButtonVisibility( startSimArBtn ) {
+
+				if ( ! startSimArBtn ) return;
+
+				async function applyVisibility() {
+
+					let showSimAr = true;
+
+					if ( 'xr' in navigator ) {
+
+						try {
+
+							showSimAr = ! await navigator.xr.isSessionSupported( 'immersive-ar' );
+
+						} catch ( _error ) {
+
+							showSimAr = true;
+
+						}
+
+					}
+
+					startSimArBtn.classList.toggle( 'visible', showSimAr );
+
+				}
+
+				applyVisibility();
+
+			}
+
 			function setupHomeScreen() {
 
 				const select = document.getElementById( 'mini-game-select' );
@@ -2663,6 +2698,8 @@
 				}
 
 				if ( startSimArBtn ) {
+
+					updateSimArButtonVisibility( startSimArBtn );
 
 					startSimArBtn.addEventListener( 'click', () => {
 
