@@ -882,6 +882,26 @@
 				display: block;
 			}
 
+			#bowling-hud {
+				display: none;
+				position: fixed;
+				left: 0;
+				right: 0;
+				top: 110px;
+				z-index: 10001;
+				text-align: center;
+				font-family: system-ui, sans-serif;
+				font-size: 14px;
+				font-weight: 600;
+				color: #fff;
+				text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+				pointer-events: none;
+			}
+
+			#bowling-hud.visible {
+				display: block;
+			}
+
 			.platforms-drive-panel {
 				display: none;
 				position: absolute;
@@ -1013,6 +1033,7 @@
 		<div id="zombies-hud">Stand up straight in the middle of the play area, then tap to calibrate</div>
 		<div id="rc-car-hud">Point at the floor to place your RC car</div>
 		<div id="platforms-hud">Jump across platforms to reach the green exit on the far wall</div>
+		<div id="bowling-hud">Point at the floor to place the bowling alley</div>
 
 		<div id="ar-overlay">
 			<div id="bounce-hud">Hits: 0</div>
@@ -1217,6 +1238,7 @@
 				registerMiniGame( createBounceGame() );
 				registerMiniGame( createCollectItemsGame() );
 				registerMiniGame( createZombiesGame() );
+				registerMiniGame( createBowlingGame() );
 
 				setupWorldBuilderControls();
 				setupPaintControls();
@@ -2004,6 +2026,7 @@
 				const rcCarDriveRight = document.getElementById( 'rc-car-drive-right' );
 				const platformsHud = document.getElementById( 'platforms-hud' );
 				const platformsMovePanel = document.getElementById( 'platforms-move-panel' );
+				const bowlingHud = document.getElementById( 'bowling-hud' );
 				const roomScaleSetupEl = document.getElementById( 'room-scale-setup' );
 
 				function showGameOverlayForSelection() {
@@ -2028,6 +2051,7 @@
 					const isPlatforms = selectedMiniGameId === 'platforms';
 					platformsHud.classList.toggle( 'visible', isPlatforms );
 					platformsMovePanel.classList.toggle( 'visible', isPlatforms );
+					bowlingHud.classList.toggle( 'visible', selectedMiniGameId === 'bowling' );
 
 				}
 
@@ -2169,6 +2193,7 @@
 					rcCarDriveRight.classList.remove( 'visible' );
 					platformsHud.classList.remove( 'visible' );
 					platformsMovePanel.classList.remove( 'visible' );
+					bowlingHud.classList.remove( 'visible' );
 					for ( const button of document.querySelectorAll( '.rc-car-drive-panel .rc-drive-button, .platforms-drive-panel .platforms-drive-button' ) ) {
 
 						button.classList.remove( 'pressed' );
@@ -8332,6 +8357,873 @@
 							} else {
 
 								shooterCrosshair.classList.remove( 'visible' );
+
+							}
+
+						}
+
+					};
+
+				}
+
+				return { id, label, create };
+
+			}
+
+			function createBowlingGame() {
+
+				const id = 'bowling';
+				const label = 'Bowling';
+				const ALLEY_LENGTH = 2.1;
+				const ALLEY_WIDTH = 0.46;
+				const LANE_THICKNESS = 0.03;
+				const GUTTER_WIDTH = 0.07;
+				const BALL_RADIUS = 0.055;
+				const PIN_RADIUS = 0.018;
+				const PIN_HEIGHT = 0.14;
+				const PIN_SPACING = 0.075;
+				const PIN_ROW_STEP = PIN_SPACING * 0.866;
+				const MIN_LAUNCH_SPEED = 1.1;
+				const MAX_LAUNCH_SPEED = 4.6;
+				const CHARGE_MAX_MS = 2200;
+				const FRICTION = 2.4;
+				const STOP_SPEED = 0.08;
+				const HUD_PLACING = 'Point at the floor to place the bowling alley';
+				const HUD_READY = 'Hold anywhere to charge, release to roll';
+				const HUD_GAME_OVER = 'Game over! Tap to play again';
+
+				const PIN_LAYOUT = [
+					{ id: 1, x: 0, z: 0 },
+					{ id: 2, x: - PIN_SPACING, z: PIN_ROW_STEP },
+					{ id: 3, x: PIN_SPACING, z: PIN_ROW_STEP },
+					{ id: 4, x: - PIN_SPACING * 2, z: PIN_ROW_STEP * 2 },
+					{ id: 5, x: 0, z: PIN_ROW_STEP * 2 },
+					{ id: 6, x: PIN_SPACING * 2, z: PIN_ROW_STEP * 2 },
+					{ id: 7, x: - PIN_SPACING * 3, z: PIN_ROW_STEP * 3 },
+					{ id: 8, x: - PIN_SPACING, z: PIN_ROW_STEP * 3 },
+					{ id: 9, x: PIN_SPACING, z: PIN_ROW_STEP * 3 },
+					{ id: 10, x: PIN_SPACING * 3, z: PIN_ROW_STEP * 3 }
+				];
+
+				function buildBowlingAlley() {
+
+					const group = new THREE.Group();
+					const disposables = [];
+					const halfW = ALLEY_WIDTH / 2;
+					const halfL = ALLEY_LENGTH / 2;
+
+					const laneMat = new THREE.MeshPhongMaterial( { color: 0xc4a574 } );
+					const gutterMat = new THREE.MeshPhongMaterial( { color: 0x334155 } );
+					const pinMat = new THREE.MeshPhongMaterial( { color: 0xf8fafc, emissive: 0x1e293b } );
+					const ballMat = new THREE.MeshPhongMaterial( { color: 0x1d4ed8, emissive: 0x172554 } );
+
+					const laneGeo = new THREE.BoxGeometry( ALLEY_WIDTH, LANE_THICKNESS, ALLEY_LENGTH );
+					const lane = new THREE.Mesh( laneGeo, laneMat );
+					lane.position.y = LANE_THICKNESS / 2;
+					group.add( lane );
+
+					const gutterGeo = new THREE.BoxGeometry( GUTTER_WIDTH, LANE_THICKNESS * 0.9, ALLEY_LENGTH );
+					const leftGutter = new THREE.Mesh( gutterGeo, gutterMat );
+					leftGutter.position.set( - halfW - GUTTER_WIDTH / 2, LANE_THICKNESS / 2, 0 );
+					group.add( leftGutter );
+
+					const rightGutter = new THREE.Mesh( gutterGeo, gutterMat );
+					rightGutter.position.set( halfW + GUTTER_WIDTH / 2, LANE_THICKNESS / 2, 0 );
+					group.add( rightGutter );
+
+					const pinDeckZ = halfL - 0.28;
+					const pins = [];
+
+					for ( const spec of PIN_LAYOUT ) {
+
+						const pinGeo = new THREE.CylinderGeometry( PIN_RADIUS, PIN_RADIUS * 0.85, PIN_HEIGHT, 10 );
+						const pin = new THREE.Mesh( pinGeo, pinMat );
+						pin.position.set( spec.x, PIN_HEIGHT / 2 + LANE_THICKNESS, pinDeckZ + spec.z );
+						pin.userData.pinId = spec.id;
+						pin.userData.homePosition = pin.position.clone();
+						pin.userData.homeQuaternion = pin.quaternion.clone();
+						group.add( pin );
+						pins.push( pin );
+						disposables.push( pinGeo );
+
+					}
+
+					const ballGeo = new THREE.SphereGeometry( BALL_RADIUS, 18, 18 );
+					const ball = new THREE.Mesh( ballGeo, ballMat );
+					ball.position.set( 0, BALL_RADIUS + LANE_THICKNESS, - halfL + 0.22 );
+					group.add( ball );
+
+					disposables.push( laneGeo, gutterGeo, ballGeo, laneMat, gutterMat, pinMat, ballMat );
+					group.userData.disposables = disposables;
+					group.userData.ball = ball;
+					group.userData.pins = pins;
+					group.userData.halfW = halfW;
+					group.userData.halfL = halfL;
+					group.userData.pinDeckZ = pinDeckZ;
+
+					return group;
+
+				}
+
+				function create( { scene, renderer, camera, roomBounds } ) {
+
+					let hitTestSource = null;
+					let hitTestSourceRequested = false;
+					let alleyGroup = null;
+					let alleySpawned = false;
+					let sessionStartTime = 0;
+					let lastFrameTime = 0;
+					let hasHitPose = false;
+					let phase = 'placing';
+					let isCharging = false;
+					let chargeStartMs = 0;
+					let pendingChargeDown = false;
+					let pendingChargeUp = false;
+					let ballRolling = false;
+					let pinsKnockedBeforeRoll = 0;
+					let frameIndex = 0;
+					let rollInFrame = 0;
+					let gameOver = false;
+					let resetPinsAfterRoll = false;
+					let rollSettleUntil = 0;
+					const frameScores = Array.from( { length: 10 }, () => ( { roll1: null, roll2: null } ) );
+
+					const hitPos = new THREE.Vector3();
+					const hitQuat = new THREE.Quaternion();
+					const hitScale = new THREE.Vector3();
+					const camPos = new THREE.Vector3();
+					const toPlayer = new THREE.Vector3();
+					const forward = new THREE.Vector3();
+					const up = new THREE.Vector3( 0, 1, 0 );
+					const extraRot = new THREE.Quaternion();
+					const spawnMatrix = new THREE.Matrix4();
+					const ballLocal = new THREE.Vector3();
+					const ballVelLocal = new THREE.Vector3();
+					const pinOffset = new THREE.Vector3();
+					const worldBall = new THREE.Vector3();
+					const worldPin = new THREE.Vector3();
+
+					const bowlingHud = document.getElementById( 'bowling-hud' );
+					const pinSound = new Audio( 'sounds/bounce.mp3' );
+					pinSound.preload = 'auto';
+
+					function getViewCamera() {
+
+						if ( renderer.xr.isPresenting ) {
+
+							const xrCamera = renderer.xr.getCamera();
+
+							if ( xrCamera.cameras && xrCamera.cameras.length > 0 ) {
+
+								const eye = xrCamera.cameras[ 0 ];
+								eye.updateMatrixWorld( true );
+								return eye;
+
+							}
+
+							xrCamera.updateMatrixWorld( true );
+							return xrCamera;
+
+						}
+
+						camera.updateMatrixWorld( true );
+						return camera;
+
+					}
+
+					function playPinSound() {
+
+						const hit = pinSound.cloneNode();
+						hit.volume = 0.75;
+						hit.play().catch( () => {} );
+
+					}
+
+					function countStandingPins() {
+
+						if ( ! alleyGroup ) return 0;
+
+						let count = 0;
+
+						for ( const pin of alleyGroup.userData.pins ) {
+
+							if ( pin.userData.standing ) count ++;
+
+						}
+
+						return count;
+
+					}
+
+					function computeTotalScore() {
+
+						const rolls = [];
+
+						for ( let f = 0; f < 10; f ++ ) {
+
+							const frame = frameScores[ f ];
+
+							if ( frame.roll1 === null ) break;
+
+							rolls.push( frame.roll1 );
+
+							if ( frame.roll1 === 10 && f < 9 ) continue;
+
+							if ( frame.roll2 !== null ) rolls.push( frame.roll2 );
+
+						}
+
+						let total = 0;
+						let rollIndex = 0;
+
+						for ( let f = 0; f < 10 && rollIndex < rolls.length; f ++ ) {
+
+							if ( rolls[ rollIndex ] === 10 && f < 9 ) {
+
+								const bonus1 = rolls[ rollIndex + 1 ] || 0;
+								const bonus2 = rolls[ rollIndex + 2 ] || 0;
+								total += 10 + bonus1 + bonus2;
+								rollIndex += 1;
+								continue;
+
+							}
+
+							const first = rolls[ rollIndex ];
+							const second = rolls[ rollIndex + 1 ];
+
+							if ( second === undefined ) {
+
+								total += first;
+								break;
+
+							}
+
+							if ( first + second === 10 ) {
+
+								total += 10 + ( rolls[ rollIndex + 2 ] || 0 );
+								rollIndex += 2;
+								continue;
+
+							}
+
+							total += first + second;
+							rollIndex += 2;
+
+						}
+
+						return total;
+
+					}
+
+					function formatFrameLine() {
+
+						const parts = frameScores.map( ( frame, index ) => {
+
+							if ( frame.roll1 === null ) return '—';
+
+							if ( frame.roll1 === 10 && index < 9 ) return 'X';
+
+							if ( frame.roll2 === null ) return String( frame.roll1 );
+
+							if ( frame.roll1 + frame.roll2 === 10 ) return frame.roll1 + '/';
+
+							return frame.roll1 + ',' + frame.roll2;
+
+						} );
+
+						return parts.join( ' ' );
+
+					}
+
+					function updateHud( extra ) {
+
+						if ( ! bowlingHud ) return;
+
+						if ( phase === 'placing' ) {
+
+							bowlingHud.textContent = HUD_PLACING;
+							return;
+
+						}
+
+						if ( gameOver ) {
+
+							bowlingHud.textContent = HUD_GAME_OVER + ' · Final score: ' + computeTotalScore();
+							return;
+
+						}
+
+						const standing = countStandingPins();
+						const total = computeTotalScore();
+						let text = 'Frame ' + ( frameIndex + 1 ) + ' · Roll ' + ( rollInFrame + 1 )
+							+ ' · Total: ' + total + ' · Pins: ' + standing;
+
+						if ( extra ) text += ' · ' + extra;
+
+						text += '\n' + formatFrameLine();
+						bowlingHud.textContent = text;
+
+					}
+
+					function disposeAlley() {
+
+						if ( ! alleyGroup ) return;
+
+						scene.remove( alleyGroup );
+
+						for ( const disposable of alleyGroup.userData.disposables || [] ) {
+
+							disposable.dispose();
+
+						}
+
+						alleyGroup = null;
+
+					}
+
+					function orientAlleyTowardPlayer() {
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( camPos );
+						toPlayer.copy( camPos ).sub( hitPos ).setY( 0 );
+
+						if ( toPlayer.lengthSq() < 1e-6 ) return;
+
+						toPlayer.normalize();
+						const yaw = Math.atan2( toPlayer.x, toPlayer.z );
+						extraRot.setFromAxisAngle( up, yaw );
+						alleyGroup.quaternion.copy( hitQuat ).multiply( extraRot );
+
+					}
+
+					function resetPinMesh( pin ) {
+
+						pin.userData.standing = true;
+						pin.visible = true;
+						pin.position.copy( pin.userData.homePosition );
+						pin.quaternion.copy( pin.userData.homeQuaternion );
+
+					}
+
+					function knockPinMesh( pin, fromBall ) {
+
+						if ( ! pin.userData.standing ) return;
+
+						pin.userData.standing = false;
+						playPinSound();
+
+						pinOffset.copy( pin.position ).sub( fromBall ).setY( 0 );
+
+						if ( pinOffset.lengthSq() < 1e-6 ) pinOffset.set( Math.random() - 0.5, 0, 1 ).normalize();
+						else pinOffset.normalize();
+
+						pin.rotation.x = Math.PI / 2;
+						pin.rotation.z = Math.atan2( pinOffset.x, pinOffset.z );
+
+					}
+
+					function resetPinsAndBall() {
+
+						if ( ! alleyGroup ) return;
+
+						for ( const pin of alleyGroup.userData.pins ) {
+
+							resetPinMesh( pin );
+
+						}
+
+						const ball = alleyGroup.userData.ball;
+						const halfL = alleyGroup.userData.halfL;
+						ball.position.set( 0, BALL_RADIUS + LANE_THICKNESS, - halfL + 0.22 );
+						ball.rotation.set( 0, 0, 0 );
+						ballVelLocal.set( 0, 0, 0 );
+						ballRolling = false;
+						pinsKnockedBeforeRoll = 0;
+
+					}
+
+					function beginReadyPhase() {
+
+						phase = 'ready';
+						isCharging = false;
+						gameOver = false;
+						frameIndex = 0;
+						rollInFrame = 0;
+						resetPinsAfterRoll = false;
+
+						for ( const frame of frameScores ) {
+
+							frame.roll1 = null;
+							frame.roll2 = null;
+
+						}
+
+						resetPinsAndBall();
+						updateHud( HUD_READY );
+
+					}
+
+					function spawnAlleyAt( matrix ) {
+
+						if ( alleySpawned ) return;
+
+						matrix.decompose( hitPos, hitQuat, hitScale );
+						alleyGroup = buildBowlingAlley();
+						alleyGroup.position.copy( hitPos );
+						alleyGroup.quaternion.copy( hitQuat );
+						orientAlleyTowardPlayer();
+
+						if ( roomBounds ) {
+
+							alleyGroup.position.y = roomBounds.floorY;
+							const fitScale = roomBounds.getFitScale( ALLEY_LENGTH, ALLEY_WIDTH, 0.55 );
+							alleyGroup.scale.setScalar( fitScale );
+
+						}
+
+						alleyGroup.updateMatrixWorld( true );
+						scene.add( alleyGroup );
+						alleySpawned = true;
+						beginReadyPhase();
+
+					}
+
+					function spawnAlleyInRoom( bounds ) {
+
+						const point = bounds.getRandomFloorPoint();
+						hitPos.copy( point );
+						hitQuat.copy( bounds.quaternion );
+						hitScale.set( 1, 1, 1 );
+						spawnMatrix.compose( hitPos, hitQuat, hitScale );
+						spawnAlleyAt( spawnMatrix );
+
+					}
+
+					function spawnAlleyInFrontOfCamera() {
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldPosition( camPos );
+						viewCamera.getWorldDirection( forward );
+						forward.y = 0;
+
+						if ( forward.lengthSq() < 1e-6 ) forward.set( 0, 0, - 1 );
+						else forward.normalize();
+
+						hitPos.copy( camPos ).addScaledVector( forward, 1.15 );
+						hitPos.y = camPos.y - 1.35;
+						hitQuat.setFromAxisAngle( up, Math.atan2( forward.x, forward.z ) );
+						hitScale.set( 1, 1, 1 );
+						spawnMatrix.compose( hitPos, hitQuat, hitScale );
+						spawnAlleyAt( spawnMatrix );
+
+					}
+
+					function updateHitPoseFromResults( hitTestResults, referenceSpace ) {
+
+						if ( hitTestResults.length === 0 ) {
+
+							hasHitPose = false;
+							return;
+
+						}
+
+						spawnMatrix.fromArray( hitTestResults[ 0 ].getPose( referenceSpace ).transform.matrix );
+						hasHitPose = true;
+
+					}
+
+					function canCharge() {
+
+						return alleySpawned && phase === 'ready' && ! ballRolling && ! gameOver && ! isCharging;
+
+					}
+
+					function startCharge() {
+
+						if ( ! canCharge() ) return;
+
+						isCharging = true;
+						chargeStartMs = performance.now();
+
+					}
+
+					function launchBall() {
+
+						if ( ! isCharging || ! alleyGroup ) return;
+
+						isCharging = false;
+
+						const heldMs = performance.now() - chargeStartMs;
+						const power = Math.min( 1, heldMs / CHARGE_MAX_MS );
+						const speed = THREE.MathUtils.lerp( MIN_LAUNCH_SPEED, MAX_LAUNCH_SPEED, power );
+
+						ballVelLocal.set( 0, 0, speed );
+						ballRolling = true;
+						pinsKnockedBeforeRoll = 10 - countStandingPins();
+						phase = 'rolling';
+						updateHud( 'Power ' + Math.round( power * 100 ) + '%' );
+
+					}
+
+					function recordRoll( pinsThisRoll ) {
+
+						const frame = frameScores[ frameIndex ];
+						const capped = Math.min( 10, Math.max( 0, pinsThisRoll ) );
+
+						if ( rollInFrame === 0 ) {
+
+							frame.roll1 = capped;
+
+							if ( capped === 10 && frameIndex < 9 ) {
+
+								resetPinsAfterRoll = true;
+								rollInFrame = 0;
+								frameIndex ++;
+
+							} else {
+
+								rollInFrame = 1;
+
+								if ( countStandingPins() === 0 ) {
+
+									resetPinsAfterRoll = true;
+									rollInFrame = 0;
+									frameIndex ++;
+
+								}
+
+							}
+
+						} else {
+
+							const maxSecond = Math.max( 0, 10 - ( frame.roll1 || 0 ) );
+							frame.roll2 = Math.min( maxSecond, capped );
+							resetPinsAfterRoll = true;
+							rollInFrame = 0;
+							frameIndex ++;
+
+						}
+
+						if ( frameIndex >= 10 ) {
+
+							gameOver = true;
+							phase = 'ready';
+
+						}
+
+					}
+
+					function finishRoll() {
+
+						if ( ! alleyGroup || phase !== 'rolling' ) return;
+
+						ballRolling = false;
+						const standing = countStandingPins();
+						const pinsThisRoll = Math.max( 0, pinsKnockedBeforeRoll - standing );
+
+						recordRoll( pinsThisRoll );
+						rollSettleUntil = performance.now() + 900;
+						phase = 'settling';
+						updateHud();
+
+					}
+
+					function updateBallPhysics( delta ) {
+
+						if ( ! ballRolling || ! alleyGroup ) return;
+
+						const ball = alleyGroup.userData.ball;
+						const halfW = alleyGroup.userData.halfW;
+						const halfL = alleyGroup.userData.halfL;
+						const scale = alleyGroup.scale.x;
+
+						ballVelLocal.multiplyScalar( Math.max( 0, 1 - FRICTION * delta ) );
+						ball.position.x += ballVelLocal.x * delta;
+						ball.position.z += ballVelLocal.z * delta;
+
+						const laneHalfW = halfW - BALL_RADIUS - 0.02;
+						const maxZ = halfL - BALL_RADIUS - 0.05;
+						const minZ = - halfL + BALL_RADIUS + 0.05;
+
+						if ( ball.position.x < - laneHalfW || ball.position.x > laneHalfW ) {
+
+							ballVelLocal.set( 0, 0, 0 );
+							finishRoll();
+							return;
+
+						}
+
+						if ( ball.position.z > maxZ ) {
+
+							ball.position.z = maxZ;
+							ballVelLocal.z = 0;
+
+						}
+
+						if ( ball.position.z < minZ ) {
+
+							ball.position.z = minZ;
+							ballVelLocal.z = Math.abs( ballVelLocal.z ) * 0.2;
+
+						}
+
+						alleyGroup.updateMatrixWorld( true );
+						ball.getWorldPosition( worldBall );
+
+						for ( const pin of alleyGroup.userData.pins ) {
+
+							if ( ! pin.userData.standing ) continue;
+
+							pin.getWorldPosition( worldPin );
+							const hitDist = BALL_RADIUS * scale + PIN_RADIUS * scale;
+							const dx = worldBall.x - worldPin.x;
+							const dz = worldBall.z - worldPin.z;
+
+							if ( dx * dx + dz * dz < hitDist * hitDist ) {
+
+								knockPinMesh( pin, ball.position );
+
+								const push = Math.sqrt( dx * dx + dz * dz ) || 0.001;
+								ballVelLocal.x += ( dx / push ) * 0.45;
+								ballVelLocal.z += ( dz / push ) * 0.25;
+
+							}
+
+						}
+
+						const speed = ballVelLocal.length();
+
+						if ( speed < STOP_SPEED || ball.position.z >= maxZ - 0.02 ) {
+
+							ballVelLocal.set( 0, 0, 0 );
+							finishRoll();
+
+						}
+
+					}
+
+					function onPointerDown( event ) {
+
+						if ( gameOver ) {
+
+							event.preventDefault();
+							beginReadyPhase();
+							updateHud( HUD_READY );
+							return;
+
+						}
+
+						if ( ! canCharge() ) return;
+
+						event.preventDefault();
+						pendingChargeDown = true;
+
+					}
+
+					function onPointerUp() {
+
+						if ( isCharging ) pendingChargeUp = true;
+
+					}
+
+					function onXRSelectStart() {
+
+						if ( gameOver ) {
+
+							beginReadyPhase();
+							updateHud( HUD_READY );
+							return;
+
+						}
+
+						if ( canCharge() ) pendingChargeDown = true;
+
+					}
+
+					function onXRSelectEnd() {
+
+						if ( isCharging ) pendingChargeUp = true;
+
+					}
+
+					return {
+
+						onSessionStart() {
+
+							hitTestSourceRequested = false;
+							hitTestSource = null;
+							alleySpawned = false;
+							hasHitPose = false;
+							sessionStartTime = performance.now();
+							lastFrameTime = sessionStartTime;
+							phase = 'placing';
+							isCharging = false;
+							pendingChargeDown = false;
+							pendingChargeUp = false;
+							ballRolling = false;
+							gameOver = false;
+							bowlingHud.textContent = HUD_PLACING;
+
+							renderer.domElement.style.touchAction = 'none';
+							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
+							window.addEventListener( 'pointerup', onPointerUp );
+							window.addEventListener( 'pointercancel', onPointerUp );
+
+							const xrSession = renderer.xr.getSession();
+
+							if ( xrSession ) {
+
+								xrSession.addEventListener( 'selectstart', onXRSelectStart );
+								xrSession.addEventListener( 'selectend', onXRSelectEnd );
+
+							}
+
+						},
+
+						onSessionEnd() {
+
+							renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
+							window.removeEventListener( 'pointerup', onPointerUp );
+							window.removeEventListener( 'pointercancel', onPointerUp );
+
+							const xrSession = renderer.xr.getSession();
+
+							if ( xrSession ) {
+
+								xrSession.removeEventListener( 'selectstart', onXRSelectStart );
+								xrSession.removeEventListener( 'selectend', onXRSelectEnd );
+
+							}
+
+							if ( hitTestSource ) {
+
+								hitTestSource.cancel();
+								hitTestSource = null;
+
+							}
+
+							hitTestSourceRequested = false;
+							hasHitPose = false;
+							isCharging = false;
+							pendingChargeDown = false;
+							pendingChargeUp = false;
+							disposeAlley();
+							alleySpawned = false;
+
+						},
+
+						onFrame( timestamp, frame ) {
+
+							if ( ! frame ) return;
+
+							const delta = Math.min( ( timestamp - lastFrameTime ) / 1000, 0.05 );
+							lastFrameTime = timestamp;
+
+							if ( pendingChargeDown ) {
+
+								pendingChargeDown = false;
+								startCharge();
+
+							}
+
+							if ( pendingChargeUp ) {
+
+								pendingChargeUp = false;
+								launchBall();
+
+							}
+
+							if ( isCharging && phase === 'ready' ) {
+
+								const power = Math.min( 1, ( performance.now() - chargeStartMs ) / CHARGE_MAX_MS );
+								updateHud( 'Hold… Power ' + Math.round( power * 100 ) + '%' );
+
+							}
+
+							const referenceSpace = renderer.xr.getReferenceSpace();
+							const session = renderer.xr.getSession();
+
+							if ( hitTestSourceRequested === false ) {
+
+								session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
+
+									session.requestHitTestSource( { space: viewerSpace } ).then( function ( source ) {
+
+										hitTestSource = source;
+
+									} );
+
+								} );
+
+								session.addEventListener( 'end', function () {
+
+									hitTestSourceRequested = false;
+									hitTestSource = null;
+									hasHitPose = false;
+
+								} );
+
+								hitTestSourceRequested = true;
+
+							}
+
+							let hitTestResults = [];
+
+							if ( hitTestSource ) {
+
+								hitTestResults = frame.getHitTestResults( hitTestSource );
+								updateHitPoseFromResults( hitTestResults, referenceSpace );
+
+							}
+
+							if ( ! alleySpawned ) {
+
+								if ( roomBounds ) {
+
+									spawnAlleyInRoom( roomBounds );
+
+								} else if ( hitTestResults.length ) {
+
+									spawnAlleyAt( spawnMatrix );
+
+								}
+
+								if ( ! alleySpawned && ! roomBounds && performance.now() - sessionStartTime > 2200 ) {
+
+									spawnAlleyInFrontOfCamera();
+
+								}
+
+								return;
+
+							}
+
+							if ( ballRolling ) {
+
+								updateBallPhysics( delta );
+
+							}
+
+							if ( phase === 'settling' && performance.now() >= rollSettleUntil ) {
+
+								if ( resetPinsAfterRoll && ! gameOver ) {
+
+									resetPinsAndBall();
+
+								} else if ( ! gameOver ) {
+
+									const ball = alleyGroup.userData.ball;
+									const halfL = alleyGroup.userData.halfL;
+									ball.position.set( 0, BALL_RADIUS + LANE_THICKNESS, - halfL + 0.22 );
+									ballVelLocal.set( 0, 0, 0 );
+									ballRolling = false;
+									pinsKnockedBeforeRoll = 10 - countStandingPins();
+
+								}
+
+								resetPinsAfterRoll = false;
+								phase = 'ready';
+								updateHud( HUD_READY );
 
 							}
 
