@@ -902,6 +902,59 @@
 				display: block;
 			}
 
+			#bowling-power-wrap {
+				display: none;
+				position: fixed;
+				left: 50%;
+				bottom: 118px;
+				transform: translateX(-50%);
+				z-index: 10002;
+				width: min(88vw, 300px);
+				flex-direction: column;
+				align-items: stretch;
+				gap: 6px;
+				pointer-events: none;
+			}
+
+			#bowling-power-wrap.visible {
+				display: flex;
+			}
+
+			#bowling-power-label {
+				font-family: system-ui, sans-serif;
+				font-size: 12px;
+				font-weight: 700;
+				color: #fff;
+				text-align: center;
+				text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+			}
+
+			#bowling-power-track {
+				height: 14px;
+				border-radius: 999px;
+				background: rgba(0, 0, 0, 0.55);
+				border: 1px solid rgba(255, 255, 255, 0.35);
+				overflow: hidden;
+				box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+			}
+
+			#bowling-power-fill {
+				width: 0%;
+				height: 100%;
+				border-radius: 999px;
+				background: linear-gradient(90deg, #22c55e, #eab308, #ef4444);
+				transition: width 0.05s linear;
+			}
+
+			#bowling-power-percent {
+				font-family: system-ui, sans-serif;
+				font-size: 13px;
+				font-weight: 700;
+				color: #fff;
+				text-align: center;
+				text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
+			}
+
 			.platforms-drive-panel {
 				display: none;
 				position: absolute;
@@ -1034,6 +1087,11 @@
 		<div id="rc-car-hud">Point at the floor to place your RC car</div>
 		<div id="platforms-hud">Jump across platforms to reach the green exit on the far wall</div>
 		<div id="bowling-hud">Point at the floor to place the bowling alley</div>
+		<div id="bowling-power-wrap" aria-hidden="true">
+			<div id="bowling-power-label">Roll power</div>
+			<div id="bowling-power-track"><div id="bowling-power-fill"></div></div>
+			<div id="bowling-power-percent">0%</div>
+		</div>
 
 		<div id="ar-overlay">
 			<div id="bounce-hud">Hits: 0</div>
@@ -8383,9 +8441,10 @@
 				const PIN_HEIGHT = 0.14;
 				const PIN_SPACING = 0.075;
 				const PIN_ROW_STEP = PIN_SPACING * 0.866;
-				const MIN_LAUNCH_SPEED = 1.1;
-				const MAX_LAUNCH_SPEED = 4.6;
-				const CHARGE_MAX_MS = 2200;
+				const MIN_LAUNCH_SPEED = 0.95;
+				const MAX_LAUNCH_SPEED = 3.85;
+				const CHARGE_MAX_MS = 3000;
+				const POWER_FULL_EFFECT = 0.7;
 				const FRICTION = 2.4;
 				const STOP_SPEED = 0.08;
 				const HUD_PLACING = 'Point at the floor to place the bowling alley';
@@ -8504,8 +8563,13 @@
 					const worldPin = new THREE.Vector3();
 
 					const bowlingHud = document.getElementById( 'bowling-hud' );
+					const bowlingPowerWrap = document.getElementById( 'bowling-power-wrap' );
+					const bowlingPowerFill = document.getElementById( 'bowling-power-fill' );
+					const bowlingPowerPercent = document.getElementById( 'bowling-power-percent' );
 					const pinSound = new Audio( 'sounds/bounce.mp3' );
 					pinSound.preload = 'auto';
+					const strikeSound = new Audio( 'sounds/strike.mp3' );
+					strikeSound.preload = 'auto';
 
 					function getViewCamera() {
 
@@ -8536,6 +8600,48 @@
 						const hit = pinSound.cloneNode();
 						hit.volume = 0.75;
 						hit.play().catch( () => {} );
+
+					}
+
+					function playStrikeSound() {
+
+						const hit = strikeSound.cloneNode();
+						hit.volume = 0.9;
+						hit.play().catch( () => {} );
+
+					}
+
+					function getChargePower() {
+
+						if ( ! isCharging ) return 0;
+
+						return Math.min( 1, ( performance.now() - chargeStartMs ) / CHARGE_MAX_MS );
+
+					}
+
+					function powerToLaunchSpeed( power ) {
+
+						const effective = Math.min( 1, power / POWER_FULL_EFFECT );
+
+						return THREE.MathUtils.lerp( MIN_LAUNCH_SPEED, MAX_LAUNCH_SPEED, effective );
+
+					}
+
+					function updatePowerBar( power ) {
+
+						if ( ! bowlingPowerWrap || ! bowlingPowerFill || ! bowlingPowerPercent ) return;
+
+						const pct = Math.round( power * 100 );
+						bowlingPowerFill.style.width = pct + '%';
+						bowlingPowerPercent.textContent = pct + '%';
+
+					}
+
+					function setPowerBarVisible( visible ) {
+
+						if ( bowlingPowerWrap ) bowlingPowerWrap.classList.toggle( 'visible', visible );
+
+						if ( ! visible ) updatePowerBar( 0 );
 
 					}
 
@@ -8844,6 +8950,8 @@
 
 						isCharging = true;
 						chargeStartMs = performance.now();
+						setPowerBarVisible( true );
+						updatePowerBar( 0 );
 
 					}
 
@@ -8851,11 +8959,12 @@
 
 						if ( ! isCharging || ! alleyGroup ) return;
 
-						isCharging = false;
+						const power = getChargePower();
 
-						const heldMs = performance.now() - chargeStartMs;
-						const power = Math.min( 1, heldMs / CHARGE_MAX_MS );
-						const speed = THREE.MathUtils.lerp( MIN_LAUNCH_SPEED, MAX_LAUNCH_SPEED, power );
+						isCharging = false;
+						setPowerBarVisible( false );
+
+						const speed = powerToLaunchSpeed( power );
 
 						ballVelLocal.set( 0, 0, speed );
 						ballRolling = true;
@@ -8876,9 +8985,14 @@
 
 							if ( capped === 10 && frameIndex < 9 ) {
 
+								playStrikeSound();
 								resetPinsAfterRoll = true;
 								rollInFrame = 0;
 								frameIndex ++;
+
+							} else if ( capped === 10 ) {
+
+								playStrikeSound();
 
 							} else {
 
@@ -9107,6 +9221,7 @@
 							isCharging = false;
 							pendingChargeDown = false;
 							pendingChargeUp = false;
+							setPowerBarVisible( false );
 							disposeAlley();
 							alleySpawned = false;
 
@@ -9135,8 +9250,9 @@
 
 							if ( isCharging && phase === 'ready' ) {
 
-								const power = Math.min( 1, ( performance.now() - chargeStartMs ) / CHARGE_MAX_MS );
-								updateHud( 'Hold… Power ' + Math.round( power * 100 ) + '%' );
+								const power = getChargePower();
+								updatePowerBar( power );
+								updateHud( 'Hold to charge · release to roll' );
 
 							}
 
