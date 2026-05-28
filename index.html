@@ -1136,7 +1136,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 22:46</div>
+		<div id="version">version: 23:04</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1173,7 +1173,7 @@
 		<div id="shooter-crosshair" aria-hidden="true"></div>
 		<div id="maze-hud">Walk through the maze to the green exit</div>
 		<div id="collect-items-hud">Level 1 · Collect all items</div>
-		<div id="zombies-hud">Stand up straight in the middle of the play area, then tap to calibrate</div>
+		<div id="zombies-hud">Finding play area…</div>
 		<div id="rc-car-hud">Point at the floor to place your RC car</div>
 		<div id="platforms-hud">Jump across platforms to reach the green exit on the far wall</div>
 		<button id="ar-exit-btn" type="button" aria-label="Exit to home screen" title="Exit to home">×</button>
@@ -1649,6 +1649,8 @@
 					}
 
 					triggerSelectPulse();
+					event.preventDefault();
+					event.stopPropagation();
 
 				}
 
@@ -7986,10 +7988,9 @@
 
 							shootFromXRSelect( pendingXRSelect, frame );
 							pendingXRSelect = null;
+							pendingPointerShot = null;
 
-						}
-
-						if ( pendingPointerShot ) {
+						} else if ( pendingPointerShot ) {
 
 							shootAtScreen( pendingPointerShot.x, pendingPointerShot.y );
 							pendingPointerShot = null;
@@ -8114,12 +8115,12 @@
 				const id = 'zombies';
 				const label = 'Zombies';
 				const PLAY_AREA_RADIUS = 2.6;
-				const CENTER_RADIUS = 0.85;
 				const ROOM_SPAWN_WALL_INSET = 0.55;
 				const MIN_SPAWN_PLAYER_DIST = 1.1;
 				const MIN_ZOMBIE_SEPARATION = 0.55;
 				const MAX_SPAWN_ATTEMPTS = 48;
 				const ZOMBIE_HIT_RADIUS = 0.32;
+				const ZOMBIE_HITS_TO_KILL = 3;
 				const PLAYER_COLLISION_RADIUS = 0.38;
 				const DEFAULT_ZOMBIE_SPEED = 0.45;
 				const STARTING_LIVES = 5;
@@ -8141,11 +8142,12 @@
 					let zombieSpeed = DEFAULT_ZOMBIE_SPEED;
 					let pendingPointerShot = null;
 					let pendingXRSelect = null;
-					let pendingCalibrateTap = null;
+					let pendingRestartTap = null;
 					let xrSession = null;
 
 					const zombies = [];
 					const bulletTrails = [];
+					const impactParticles = [];
 					const playCenter = new THREE.Vector3();
 					const raycaster = new THREE.Raycaster();
 					const pointer = new THREE.Vector2();
@@ -8194,6 +8196,8 @@
 					const muzzleOffset = 0.2;
 					const bulletSpeed = 18;
 					const bulletTrailLife = 0.35;
+					const impactParticleLife = 0.55;
+					const impactParticleCount = 18;
 					let wallPickMeshes = [];
 
 					function getViewCamera() {
@@ -8236,15 +8240,6 @@
 						if ( phase === 'setup' ) {
 
 							zombiesHud.textContent = 'Finding play area…';
-							zombiesHud.classList.add( 'visible' );
-							if ( zombiesStatsHud ) zombiesStatsHud.classList.remove( 'visible' );
-							return;
-
-						}
-
-						if ( phase === 'calibrate' ) {
-
-							zombiesHud.textContent = 'Stand up straight in the middle of the play area, then tap to calibrate';
 							zombiesHud.classList.add( 'visible' );
 							if ( zombiesStatsHud ) zombiesStatsHud.classList.remove( 'visible' );
 							return;
@@ -8328,6 +8323,7 @@
 						const mesh = new THREE.Mesh( sharedZombieGeometry, sharedZombieMaterial );
 						group.add( mesh );
 						group.userData.mesh = mesh;
+						group.userData.hitsRemaining = ZOMBIE_HITS_TO_KILL;
 
 						return group;
 
@@ -8445,6 +8441,14 @@
 
 					}
 
+					function autoDetectPlayerHeight() {
+
+						const player = getPlayerPosition();
+						playerHeight = Math.max( 1.2, Math.min( 2.2, ( player.y - floorY ) * 1.08 ) );
+						rebuildZombieAssets();
+
+					}
+
 					function beginPlayArea( center, y ) {
 
 						if ( playReady ) return;
@@ -8452,8 +8456,8 @@
 						playCenter.copy( center );
 						floorY = y;
 						playReady = true;
-						phase = 'calibrate';
-						updateHud();
+						autoDetectPlayerHeight();
+						startPlayingLevel( 1 );
 
 					}
 
@@ -8483,47 +8487,6 @@
 						hitPos.copy( camPos ).addScaledVector( forward, 2.0 );
 						hitPos.y = camPos.y - 1.45;
 						beginPlayArea( hitPos, hitPos.y );
-
-					}
-
-					function isPlayerNearCenter() {
-
-						const player = getPlayerPosition();
-						const center = roomBounds ? roomBounds.center : playCenter;
-						const dx = player.x - center.x;
-						const dz = player.z - center.z;
-
-						return ( dx * dx + dz * dz ) <= CENTER_RADIUS * CENTER_RADIUS;
-
-					}
-
-					function calibratePlayerHeight() {
-
-						const player = getPlayerPosition();
-						playerHeight = Math.max( 1.2, Math.min( 2.2, ( player.y - floorY ) * 1.08 ) );
-						rebuildZombieAssets();
-						lives = STARTING_LIVES;
-						hitCooldown = 0;
-						phase = 'playing';
-						currentLevel = 1;
-						clearZombies();
-						spawnZombies( 1 );
-						updateHud();
-
-					}
-
-					function tryCalibrateFromTap() {
-
-						if ( phase !== 'calibrate' ) return;
-
-						if ( ! isPlayerNearCenter() ) {
-
-							zombiesHud.textContent = 'Move to the middle of the play area, then tap again';
-							return;
-
-						}
-
-						calibratePlayerHeight();
 
 					}
 
@@ -8634,6 +8597,179 @@
 
 					}
 
+					function findZombieHit( origin, direction, maxDistance ) {
+
+						raycaster.set( origin, direction );
+
+						const zombieMeshes = getZombieMeshes();
+						const hits = raycaster.intersectObjects( zombieMeshes, false );
+
+						if ( hits.length > 0 && hits[ 0 ].distance <= maxDistance + 0.001 ) {
+
+							const hitMesh = hits[ 0 ].object;
+
+							for ( let i = 0; i < zombies.length; i ++ ) {
+
+								if ( zombies[ i ].userData.mesh === hitMesh ) {
+
+									return {
+										zombie: zombies[ i ],
+										point: hits[ 0 ].point.clone(),
+										distance: hits[ 0 ].distance
+									};
+
+								}
+
+							}
+
+						}
+
+						let closestZombie = null;
+						let closestDistance = ZOMBIE_HIT_RADIUS;
+						let closestImpactDistance = Infinity;
+						const viewCamera = getViewCamera();
+
+						for ( let i = 0; i < zombies.length; i ++ ) {
+
+							const zombie = zombies[ i ];
+							const mesh = zombie.userData.mesh;
+							mesh.getWorldPosition( spawnPos );
+							const distanceToRay = raycaster.ray.distanceToPoint( spawnPos );
+
+							if ( distanceToRay >= closestDistance ) continue;
+
+							toPlayer.copy( spawnPos ).sub( viewCamera.position );
+
+							if ( toPlayer.dot( raycaster.ray.direction ) <= 0 ) continue;
+
+							toPlayer.copy( spawnPos ).sub( origin );
+							const impactDistance = toPlayer.dot( direction );
+
+							if ( impactDistance <= 0 || impactDistance > maxDistance ) continue;
+
+							closestDistance = distanceToRay;
+							closestZombie = zombie;
+							closestImpactDistance = impactDistance;
+
+						}
+
+						if ( closestZombie === null ) return null;
+
+						hitPos.copy( origin ).addScaledVector( direction, closestImpactDistance );
+						hitPos.y = closestZombie.position.y + playerHeight * 0.5;
+
+						return {
+							zombie: closestZombie,
+							point: hitPos.clone(),
+							distance: closestImpactDistance
+						};
+
+					}
+
+					function spawnImpactParticles( position ) {
+
+						const count = impactParticleCount;
+						const positions = new Float32Array( count * 3 );
+						const colors = new Float32Array( count * 3 );
+						const velocities = [];
+
+						for ( let i = 0; i < count; i ++ ) {
+
+							positions[ i * 3 ] = position.x;
+							positions[ i * 3 + 1 ] = position.y;
+							positions[ i * 3 + 2 ] = position.z;
+
+							const isGreen = i % 2 === 0;
+							const color = new THREE.Color( isGreen ? 0x44ff66 : 0xff3344 );
+							colors[ i * 3 ] = color.r;
+							colors[ i * 3 + 1 ] = color.g;
+							colors[ i * 3 + 2 ] = color.b;
+
+							const speed = 1.1 + Math.random() * 1.6;
+							const velocity = new THREE.Vector3(
+								( Math.random() - 0.5 ) * 2,
+								Math.random() * 1.4 + 0.35,
+								( Math.random() - 0.5 ) * 2
+							).normalize().multiplyScalar( speed );
+							velocities.push( velocity );
+
+						}
+
+						const geometry = new THREE.BufferGeometry();
+						geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+						geometry.setAttribute( 'color', new THREE.BufferAttribute( colors, 3 ) );
+
+						const material = new THREE.PointsMaterial( {
+							size: 0.055,
+							vertexColors: true,
+							transparent: true,
+							opacity: 1,
+							depthTest: false,
+							sizeAttenuation: true
+						} );
+
+						const points = new THREE.Points( geometry, material );
+						points.renderOrder = 1000;
+						scene.add( points );
+
+						impactParticles.push( {
+							points,
+							velocities,
+							remaining: impactParticleLife,
+							maxLife: impactParticleLife
+						} );
+
+					}
+
+					function removeImpactBurst( burst ) {
+
+						scene.remove( burst.points );
+						burst.points.geometry.dispose();
+						burst.points.material.dispose();
+
+					}
+
+					function clearImpactParticles() {
+
+						for ( const burst of impactParticles ) removeImpactBurst( burst );
+						impactParticles.length = 0;
+
+					}
+
+					function updateImpactParticles( delta ) {
+
+						for ( let i = impactParticles.length - 1; i >= 0; i -- ) {
+
+							const burst = impactParticles[ i ];
+							burst.remaining -= delta;
+
+							const positionAttr = burst.points.geometry.attributes.position;
+							const positions = positionAttr.array;
+
+							for ( let j = 0; j < burst.velocities.length; j ++ ) {
+
+								const velocity = burst.velocities[ j ];
+								positions[ j * 3 ] += velocity.x * delta;
+								positions[ j * 3 + 1 ] += velocity.y * delta;
+								positions[ j * 3 + 2 ] += velocity.z * delta;
+								velocity.y -= 2.8 * delta;
+
+							}
+
+							positionAttr.needsUpdate = true;
+							burst.points.material.opacity = Math.max( 0, burst.remaining / burst.maxLife );
+
+							if ( burst.remaining <= 0 ) {
+
+								removeImpactBurst( burst );
+								impactParticles.splice( i, 1 );
+
+							}
+
+						}
+
+					}
+
 					function spawnBulletTrail( origin, direction ) {
 
 						const normalizedDirection = direction.clone().normalize();
@@ -8677,6 +8813,8 @@
 						trailGroup.renderOrder = 999;
 						scene.add( trailGroup );
 
+						const pendingHit = findZombieHit( bulletStart, normalizedDirection, trailLength );
+
 						bulletTrails.push( {
 							group: trailGroup,
 							projectile,
@@ -8686,7 +8824,9 @@
 							length: trailLength,
 							distance: 0,
 							remaining: bulletTrailLife,
-							maxLife: bulletTrailLife
+							maxLife: bulletTrailLife,
+							pendingHit,
+							hitProcessed: false
 						} );
 
 					}
@@ -8710,6 +8850,20 @@
 							const trail = bulletTrails[ i ];
 							trail.distance = Math.min( trail.length, trail.distance + bulletSpeed * delta );
 							trail.projectile.position.copy( trail.start ).addScaledVector( trail.direction, trail.distance );
+
+							if ( trail.pendingHit && ! trail.hitProcessed && trail.distance >= trail.pendingHit.distance ) {
+
+								trail.hitProcessed = true;
+								const hitIndex = zombies.indexOf( trail.pendingHit.zombie );
+
+								if ( hitIndex >= 0 ) {
+
+									spawnImpactParticles( trail.pendingHit.point );
+									damageZombieAt( hitIndex );
+
+								}
+
+							}
 
 							trail.remaining -= delta;
 							const fade = Math.max( 0, trail.remaining / trail.maxLife );
@@ -8736,62 +8890,19 @@
 						const zombie = zombies[ index ];
 						disposeZombie( zombie );
 						zombies.splice( index, 1 );
-						playZombieHitSound();
 
 						if ( zombies.length === 0 && phase === 'playing' ) onLevelComplete();
 						else updateHud();
 
 					}
 
-					function tryHitRay() {
+					function damageZombieAt( index ) {
 
-						const zombieMeshes = getZombieMeshes();
-						const hits = raycaster.intersectObjects( zombieMeshes, false );
+						const zombie = zombies[ index ];
+						zombie.userData.hitsRemaining --;
+						playZombieHitSound();
 
-						if ( hits.length > 0 ) {
-
-							const hitMesh = hits[ 0 ].object;
-
-							for ( let i = 0; i < zombies.length; i ++ ) {
-
-								if ( zombies[ i ].userData.mesh === hitMesh ) {
-
-									removeZombieAt( i );
-									return;
-
-								}
-
-							}
-
-						}
-
-						const viewCamera = getViewCamera();
-						let closestZombie = null;
-						let closestDistance = ZOMBIE_HIT_RADIUS;
-
-						for ( let i = 0; i < zombies.length; i ++ ) {
-
-							const zombie = zombies[ i ];
-							const mesh = zombie.userData.mesh;
-							mesh.getWorldPosition( spawnPos );
-							const distanceToRay = raycaster.ray.distanceToPoint( spawnPos );
-
-							if ( distanceToRay < closestDistance ) {
-
-								const toZombie = spawnPos.clone().sub( viewCamera.position );
-
-								if ( toZombie.dot( raycaster.ray.direction ) > 0 ) {
-
-									closestDistance = distanceToRay;
-									closestZombie = i;
-
-								}
-
-							}
-
-						}
-
-						if ( closestZombie !== null ) removeZombieAt( closestZombie );
+						if ( zombie.userData.hitsRemaining <= 0 ) removeZombieAt( index );
 
 					}
 
@@ -8801,8 +8912,6 @@
 
 						playGunSound();
 						spawnBulletTrail( origin, normalizedDirection );
-						raycaster.set( origin, normalizedDirection );
-						tryHitRay();
 
 					}
 
@@ -8848,9 +8957,9 @@
 						event.preventDefault();
 						const point = event.changedTouches ? event.changedTouches[ 0 ] : event;
 
-						if ( phase === 'calibrate' || phase === 'game_over' ) {
+						if ( phase === 'game_over' ) {
 
-							pendingCalibrateTap = { x: point.clientX, y: point.clientY };
+							pendingRestartTap = { x: point.clientX, y: point.clientY };
 							return;
 
 						}
@@ -8863,9 +8972,9 @@
 
 					function onXRSelect( event ) {
 
-						if ( phase === 'calibrate' || phase === 'game_over' ) {
+						if ( phase === 'game_over' ) {
 
-							pendingCalibrateTap = { xr: event };
+							pendingRestartTap = { xr: event };
 							return;
 
 						}
@@ -8878,19 +8987,11 @@
 
 					function processPendingInput( frame ) {
 
-						if ( pendingCalibrateTap ) {
+						if ( pendingRestartTap ) {
 
-							if ( phase === 'game_over' ) {
+							if ( phase === 'game_over' ) startPlayingLevel( 1 );
 
-								startPlayingLevel( 1 );
-
-							} else {
-
-								tryCalibrateFromTap();
-
-							}
-
-							pendingCalibrateTap = null;
+							pendingRestartTap = null;
 
 						}
 
@@ -8900,10 +9001,9 @@
 
 							shootFromXRSelect( pendingXRSelect, frame );
 							pendingXRSelect = null;
+							pendingPointerShot = null;
 
-						}
-
-						if ( pendingPointerShot ) {
+						} else if ( pendingPointerShot ) {
 
 							shootAtScreen( pendingPointerShot.x, pendingPointerShot.y );
 							pendingPointerShot = null;
@@ -8976,11 +9076,12 @@
 							hitCooldown = 0;
 							pendingPointerShot = null;
 							pendingXRSelect = null;
-							pendingCalibrateTap = null;
+							pendingRestartTap = null;
 							clearZombies();
 
 							for ( const trail of [ ...bulletTrails ] ) removeBulletTrail( trail );
 							bulletTrails.length = 0;
+							clearImpactParticles();
 
 							refreshWallPickMeshes();
 							zombieSpeed = parseFloat( speedSlider.value );
@@ -9015,13 +9116,14 @@
 
 							pendingPointerShot = null;
 							pendingXRSelect = null;
-							pendingCalibrateTap = null;
+							pendingRestartTap = null;
 							shooterCrosshair.classList.remove( 'visible' );
 							if ( zombiesStatsHud ) zombiesStatsHud.classList.remove( 'visible' );
 							clearZombies();
 
 							for ( const trail of [ ...bulletTrails ] ) removeBulletTrail( trail );
 							bulletTrails.length = 0;
+							clearImpactParticles();
 
 							if ( sharedZombieGeometry ) {
 
@@ -9060,7 +9162,12 @@
 
 							processPendingInput( frame );
 
-							if ( phase === 'playing' ) updateBulletTrails( delta );
+							if ( phase === 'playing' ) {
+
+								updateBulletTrails( delta );
+								updateImpactParticles( delta );
+
+							}
 
 							if ( ! playReady ) {
 
