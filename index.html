@@ -639,18 +639,22 @@
 
 			#zombies-death-flash {
 				display: none;
-				position: fixed;
+				position: absolute;
 				inset: 0;
-				z-index: 10006;
+				width: 100%;
+				height: 100%;
+				z-index: 100010;
 				align-items: center;
 				justify-content: center;
 				background: rgba(220, 38, 38, 0.72);
 				pointer-events: none;
+				opacity: 0;
+				transition: opacity 0.25s ease-out;
 			}
 
 			#zombies-death-flash.visible {
 				display: flex;
-				animation: zombies-death-flash-fade 1s ease-out forwards;
+				opacity: 1;
 			}
 
 			#zombies-death-flash-text {
@@ -663,12 +667,6 @@
 				color: #fff;
 				text-align: center;
 				text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
-			}
-
-			@keyframes zombies-death-flash-fade {
-				0% { opacity: 1; }
-				75% { opacity: 1; }
-				100% { opacity: 0; }
 			}
 
 			#zombies-controls {
@@ -1176,7 +1174,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 23:33</div>
+		<div id="version">version: 23:45</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1228,9 +1226,6 @@
 				<div id="bowling-power-percent">0%</div>
 			</div>
 			<div id="zombies-stats-hud">Lives: 5 · Level 1 · zombies left: 1</div>
-			<div id="zombies-death-flash" aria-hidden="true">
-				<div id="zombies-death-flash-text"></div>
-			</div>
 			<div id="world-builder-controls" aria-label="World Builder spawn controls">
 				<span class="control-label">Spawn</span>
 				<button class="spawn-type-button active" type="button" data-spawn-type="tree">Tree</button>
@@ -1302,6 +1297,10 @@
 					<button id="room-scale-confirm-btn" class="hidden" type="button">Confirm room scale</button>
 				</div>
 			</div>
+
+			<div id="zombies-death-flash" aria-hidden="true">
+				<div id="zombies-death-flash-text"></div>
+			</div>
 		</div>
 
 		<script type="importmap">
@@ -1341,6 +1340,7 @@
 			const AR_START_LABEL = 'START AR MINI GAME';
 			const ROOM_SCALE_STORAGE_KEY = 'artest-room-scale-v2';
 			const ROOM_SCALE_STORAGE_KEY_LEGACY = 'artest-room-scale-v1';
+			const SELECTED_MINI_GAME_STORAGE_KEY = 'artest-selected-mini-game';
 			const BLOCK_SIZE = 0.2;
 			const ZOMBIES_SPEED_SLIDER_ENABLED = false;
 			const ZOMBIES_DEFAULT_SPEED = 0.15;
@@ -2346,6 +2346,32 @@
 
 			}
 
+			function loadSelectedMiniGameFromStorage() {
+
+				try {
+
+					const stored = localStorage.getItem( SELECTED_MINI_GAME_STORAGE_KEY );
+
+					if ( stored && miniGames[ stored ] ) {
+
+						selectedMiniGameId = stored;
+
+					}
+
+				} catch ( _error ) {}
+
+			}
+
+			function saveSelectedMiniGameToStorage() {
+
+				try {
+
+					localStorage.setItem( SELECTED_MINI_GAME_STORAGE_KEY, selectedMiniGameId );
+
+				} catch ( _error ) {}
+
+			}
+
 			function readRoomScaleStorage() {
 
 				try {
@@ -2608,11 +2634,13 @@
 
 				}
 
+				loadSelectedMiniGameFromStorage();
 				select.value = selectedMiniGameId;
 
 				select.addEventListener( 'change', () => {
 
 					selectedMiniGameId = select.value;
+					saveSelectedMiniGameToStorage();
 
 				} );
 
@@ -8221,7 +8249,7 @@
 				const ZOMBIES_LEVELS_PER_EXTRA = 5;
 				const ZOMBIE_EYE_PIXELS = [
 					{ x: 273, y: 133 },
-					{ x: 372, y: 133 }
+					{ x: 325, y: 118 }
 				];
 
 				function getZombieCountForLevel( level ) {
@@ -8249,6 +8277,7 @@
 					let pendingRestartTap = null;
 					let xrSession = null;
 					let deathFlashTimeout = null;
+					let deathFlashFadeTimeout = null;
 					let mistGroup = null;
 					const mistLayers = [];
 					const mistTextures = [];
@@ -8311,6 +8340,7 @@
 					let sharedZombieGeometry = null;
 					let sharedZombieMaterial = null;
 					let sharedEyeGlowGeometry = null;
+					let sharedEyeGlowTexture = null;
 					const eyeGlowMaterialPool = [];
 					const dashSegmentGeometry = new THREE.BoxGeometry( 0.025, 0.025, 0.1 );
 					const projectileGeometry = new THREE.SphereGeometry( 0.035, 8, 8 );
@@ -8400,21 +8430,53 @@
 
 						if ( sharedEyeGlowGeometry ) return;
 
-						sharedEyeGlowGeometry = new THREE.PlaneGeometry( 0.09, 0.09 );
+						const textureSize = 64;
+						const canvas = document.createElement( 'canvas' );
+						canvas.width = textureSize;
+						canvas.height = textureSize;
+						const ctx = canvas.getContext( '2d' );
+						const gradient = ctx.createRadialGradient(
+							textureSize / 2, textureSize / 2, 0,
+							textureSize / 2, textureSize / 2, textureSize / 2
+						);
+
+						gradient.addColorStop( 0, 'rgba(255, 255, 255, 1)' );
+						gradient.addColorStop( 0.35, 'rgba(255, 255, 255, 0.55)' );
+						gradient.addColorStop( 1, 'rgba(255, 255, 255, 0)' );
+
+						ctx.fillStyle = gradient;
+						ctx.fillRect( 0, 0, textureSize, textureSize );
+
+						sharedEyeGlowTexture = new THREE.CanvasTexture( canvas );
+						sharedEyeGlowTexture.colorSpace = THREE.SRGBColorSpace;
+						sharedEyeGlowGeometry = new THREE.CircleGeometry( 0.014, 20 );
 
 					}
 
-					function acquireEyeGlowMaterial() {
+					function randomEyeGlowColor() {
+
+						const color = new THREE.Color();
+						color.setHSL( Math.random(), 0.92, 0.55 );
+						return color;
+
+					}
+
+					function acquireEyeGlowMaterial( color ) {
 
 						ensureEyeGlowAssets();
-						return eyeGlowMaterialPool.pop() || new THREE.MeshBasicMaterial( {
-							color: 0xff2200,
+
+						const material = eyeGlowMaterialPool.pop() || new THREE.MeshBasicMaterial( {
+							map: sharedEyeGlowTexture,
+							color: 0xffffff,
 							transparent: true,
-							opacity: 0.9,
+							opacity: 0.95,
 							blending: THREE.AdditiveBlending,
 							depthWrite: false,
 							side: THREE.DoubleSide
 						} );
+
+						material.color.copy( color );
+						return material;
 
 					}
 
@@ -8455,10 +8517,11 @@
 						const { planeWidth, planeHeight, imgWidth, imgHeight } = getZombiePlaneSize();
 						const eyeGlows = [];
 						const eyePos = new THREE.Vector3();
+						const eyeColor = randomEyeGlowColor();
 
 						for ( const eye of ZOMBIE_EYE_PIXELS ) {
 
-							const glow = new THREE.Mesh( sharedEyeGlowGeometry, acquireEyeGlowMaterial() );
+							const glow = new THREE.Mesh( sharedEyeGlowGeometry, acquireEyeGlowMaterial( eyeColor ) );
 							spritePixelToLocal( eye.x, eye.y, eyePos, planeWidth, planeHeight, imgWidth, imgHeight );
 							glow.position.copy( eyePos );
 							glow.renderOrder = 1;
@@ -8479,8 +8542,8 @@
 						if ( ! eyeGlows || eyeGlows.length === 0 ) return;
 
 						const pulse = 0.72 + 0.28 * Math.sin( time * 0.009 + zombie.userData.eyePulsePhase );
-						const scale = 0.88 + 0.2 * pulse;
-						const opacity = 0.55 + 0.4 * pulse;
+						const scale = 0.94 + 0.1 * pulse;
+						const opacity = 0.65 + 0.3 * pulse;
 
 						for ( const glow of eyeGlows ) {
 
@@ -8518,14 +8581,15 @@
 
 						ctx.clearRect( 0, 0, size, size );
 
-						for ( let i = 0; i < 90; i ++ ) {
+						for ( let i = 0; i < 150; i ++ ) {
 
 							const x = Math.random() * size;
 							const y = Math.random() * size;
-							const radius = 18 + Math.random() * 52;
+							const radius = 22 + Math.random() * 58;
 							const gradient = ctx.createRadialGradient( x, y, 0, x, y, radius );
 
-							gradient.addColorStop( 0, 'rgba(210, 220, 235, 0.42)' );
+							gradient.addColorStop( 0, 'rgba(210, 220, 235, 0.62)' );
+							gradient.addColorStop( 0.55, 'rgba(210, 220, 235, 0.22)' );
 							gradient.addColorStop( 1, 'rgba(210, 220, 235, 0)' );
 
 							ctx.fillStyle = gradient;
@@ -8563,9 +8627,10 @@
 
 						const coverage = getMistCoverageSize();
 						const layerConfigs = [
-							{ scale: 1.0, opacity: 0.24, speedX: 0.018, speedY: 0.006, repeat: 2.8, lift: 0.02 },
-							{ scale: 1.18, opacity: 0.16, speedX: -0.012, speedY: 0.009, repeat: 3.6, lift: 0.05 },
-							{ scale: 0.88, opacity: 0.2, speedX: 0.008, speedY: -0.005, repeat: 2.2, lift: 0.09 }
+							{ scale: 1.0, opacity: 0.42, speedX: 0.018, speedY: 0.006, repeat: 2.2, lift: 0.015 },
+							{ scale: 1.12, opacity: 0.34, speedX: -0.012, speedY: 0.009, repeat: 2.6, lift: 0.04 },
+							{ scale: 0.92, opacity: 0.38, speedX: 0.008, speedY: -0.005, repeat: 1.9, lift: 0.07 },
+							{ scale: 1.24, opacity: 0.28, speedX: 0.005, speedY: 0.004, repeat: 3.1, lift: 0.11 }
 						];
 
 						mistGroup = new THREE.Group();
@@ -8919,7 +8984,20 @@
 
 						}
 
-						if ( zombiesDeathFlash ) zombiesDeathFlash.classList.remove( 'visible' );
+						if ( deathFlashFadeTimeout ) {
+
+							window.clearTimeout( deathFlashFadeTimeout );
+							deathFlashFadeTimeout = null;
+
+						}
+
+						if ( zombiesDeathFlash ) {
+
+							zombiesDeathFlash.classList.remove( 'visible' );
+							zombiesDeathFlash.style.opacity = '';
+							zombiesDeathFlash.setAttribute( 'aria-hidden', 'true' );
+
+						}
 
 					}
 
@@ -8931,11 +9009,20 @@
 
 						zombiesDeathFlashText.textContent = 'You died. Lives left: ' + livesRemaining;
 						zombiesDeathFlash.classList.add( 'visible' );
+						zombiesDeathFlash.setAttribute( 'aria-hidden', 'false' );
+						void zombiesDeathFlash.offsetWidth;
+						zombiesDeathFlash.style.opacity = '1';
+
+						deathFlashFadeTimeout = window.setTimeout( () => {
+
+							zombiesDeathFlash.style.opacity = '0';
+							deathFlashFadeTimeout = null;
+
+						}, 750 );
 
 						deathFlashTimeout = window.setTimeout( () => {
 
-							zombiesDeathFlash.classList.remove( 'visible' );
-							deathFlashTimeout = null;
+							hideLifeLostEffect();
 
 						}, 1000 );
 
@@ -9612,6 +9699,13 @@
 
 								sharedEyeGlowGeometry.dispose();
 								sharedEyeGlowGeometry = null;
+
+							}
+
+							if ( sharedEyeGlowTexture ) {
+
+								sharedEyeGlowTexture.dispose();
+								sharedEyeGlowTexture = null;
 
 							}
 
