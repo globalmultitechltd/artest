@@ -344,8 +344,8 @@
 
 			#ar-exit-btn {
 				position: fixed;
-				top: 12px;
-				right: 12px;
+				top: max( 12px, env( safe-area-inset-top, 0px ) );
+				right: max( 12px, env( safe-area-inset-right, 0px ) );
 				display: none;
 				align-items: center;
 				justify-content: center;
@@ -363,6 +363,7 @@
 				box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
 				cursor: pointer;
 				z-index: 10005;
+				pointer-events: auto;
 				touch-action: manipulation;
 			}
 
@@ -1136,7 +1137,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 23:13</div>
+		<div id="version">version: 23:20</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1176,10 +1177,10 @@
 		<div id="zombies-hud">Finding play area…</div>
 		<div id="rc-car-hud">Point at the floor to place your RC car</div>
 		<div id="platforms-hud">Jump across platforms to reach the green exit on the far wall</div>
-		<button id="ar-exit-btn" type="button" aria-label="Exit to home screen" title="Exit to home">×</button>
 		<div id="sim-ar-help" aria-hidden="true">Sim AR: Arrow keys move, C crouch, right-drag look, left-click or E to place/interact. Tap × (top right) to return home.</div>
 
 		<div id="ar-overlay">
+			<button id="ar-exit-btn" type="button" aria-label="Exit to home screen" title="Exit to home">×</button>
 			<div id="bounce-hud">Hits: 0</div>
 			<div id="bowling-hud">Point at the floor to place the bowling alley</div>
 			<div id="bowling-power-wrap" aria-hidden="true">
