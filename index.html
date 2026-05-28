@@ -884,11 +884,11 @@
 
 			#bowling-hud {
 				display: none;
-				position: fixed;
+				position: absolute;
 				left: 0;
 				right: 0;
 				top: 110px;
-				z-index: 10001;
+				z-index: 10003;
 				text-align: center;
 				font-family: system-ui, sans-serif;
 				font-size: 14px;
@@ -904,11 +904,11 @@
 
 			#bowling-power-wrap {
 				display: none;
-				position: fixed;
+				position: absolute;
 				left: 50%;
 				bottom: 118px;
 				transform: translateX(-50%);
-				z-index: 10002;
+				z-index: 10004;
 				width: min(88vw, 300px);
 				flex-direction: column;
 				align-items: stretch;
@@ -1047,7 +1047,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 18:40</div>
+		<div id="version">version: 21:11</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1086,15 +1086,15 @@
 		<div id="zombies-hud">Stand up straight in the middle of the play area, then tap to calibrate</div>
 		<div id="rc-car-hud">Point at the floor to place your RC car</div>
 		<div id="platforms-hud">Jump across platforms to reach the green exit on the far wall</div>
-		<div id="bowling-hud">Point at the floor to place the bowling alley</div>
-		<div id="bowling-power-wrap" aria-hidden="true">
-			<div id="bowling-power-label">Roll power</div>
-			<div id="bowling-power-track"><div id="bowling-power-fill"></div></div>
-			<div id="bowling-power-percent">0%</div>
-		</div>
 
 		<div id="ar-overlay">
 			<div id="bounce-hud">Hits: 0</div>
+			<div id="bowling-hud">Point at the floor to place the bowling alley</div>
+			<div id="bowling-power-wrap" aria-hidden="true">
+				<div id="bowling-power-label">Roll power</div>
+				<div id="bowling-power-track"><div id="bowling-power-fill"></div></div>
+				<div id="bowling-power-percent">0%</div>
+			</div>
 			<div id="zombies-stats-hud">Lives: 5 · Level 1 · zombies left: 1</div>
 			<div id="world-builder-controls" aria-label="World Builder spawn controls">
 				<span class="control-label">Spawn</span>
