@@ -1174,7 +1174,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 23:45</div>
+		<div id="version">version: 23:49</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -8339,9 +8339,11 @@
 
 					let sharedZombieGeometry = null;
 					let sharedZombieMaterial = null;
-					let sharedEyeGlowGeometry = null;
-					let sharedEyeGlowTexture = null;
-					const eyeGlowMaterialPool = [];
+					let sharedEyeCoreGeometry = null;
+					let sharedEyeHaloGeometry = null;
+					let sharedEyeHaloTexture = null;
+					const eyeCoreMaterialPool = [];
+					const eyeHaloMaterialPool = [];
 					const dashSegmentGeometry = new THREE.BoxGeometry( 0.025, 0.025, 0.1 );
 					const projectileGeometry = new THREE.SphereGeometry( 0.035, 8, 8 );
 
@@ -8428,7 +8430,7 @@
 
 					function ensureEyeGlowAssets() {
 
-						if ( sharedEyeGlowGeometry ) return;
+						if ( sharedEyeCoreGeometry ) return;
 
 						const textureSize = 64;
 						const canvas = document.createElement( 'canvas' );
@@ -8441,35 +8443,53 @@
 						);
 
 						gradient.addColorStop( 0, 'rgba(255, 255, 255, 1)' );
-						gradient.addColorStop( 0.35, 'rgba(255, 255, 255, 0.55)' );
+						gradient.addColorStop( 0.45, 'rgba(255, 255, 255, 0.35)' );
 						gradient.addColorStop( 1, 'rgba(255, 255, 255, 0)' );
 
 						ctx.fillStyle = gradient;
 						ctx.fillRect( 0, 0, textureSize, textureSize );
 
-						sharedEyeGlowTexture = new THREE.CanvasTexture( canvas );
-						sharedEyeGlowTexture.colorSpace = THREE.SRGBColorSpace;
-						sharedEyeGlowGeometry = new THREE.CircleGeometry( 0.014, 20 );
+						sharedEyeHaloTexture = new THREE.CanvasTexture( canvas );
+						sharedEyeHaloTexture.colorSpace = THREE.SRGBColorSpace;
+						sharedEyeCoreGeometry = new THREE.CircleGeometry( 0.014, 20 );
+						sharedEyeHaloGeometry = new THREE.CircleGeometry( 0.034, 24 );
 
 					}
 
 					function randomEyeGlowColor() {
 
 						const color = new THREE.Color();
-						color.setHSL( Math.random(), 0.92, 0.55 );
+						color.setHSL( Math.random(), 1, 0.58 );
 						return color;
 
 					}
 
-					function acquireEyeGlowMaterial( color ) {
+					function acquireEyeCoreMaterial( color ) {
 
 						ensureEyeGlowAssets();
 
-						const material = eyeGlowMaterialPool.pop() || new THREE.MeshBasicMaterial( {
-							map: sharedEyeGlowTexture,
+						const material = eyeCoreMaterialPool.pop() || new THREE.MeshBasicMaterial( {
 							color: 0xffffff,
 							transparent: true,
-							opacity: 0.95,
+							opacity: 1,
+							depthWrite: false,
+							side: THREE.DoubleSide
+						} );
+
+						material.color.copy( color );
+						return material;
+
+					}
+
+					function acquireEyeHaloMaterial( color ) {
+
+						ensureEyeGlowAssets();
+
+						const material = eyeHaloMaterialPool.pop() || new THREE.MeshBasicMaterial( {
+							map: sharedEyeHaloTexture,
+							color: 0xffffff,
+							transparent: true,
+							opacity: 0.85,
 							blending: THREE.AdditiveBlending,
 							depthWrite: false,
 							side: THREE.DoubleSide
@@ -8480,9 +8500,15 @@
 
 					}
 
-					function releaseEyeGlowMaterial( material ) {
+					function releaseEyeCoreMaterial( material ) {
 
-						if ( material ) eyeGlowMaterialPool.push( material );
+						if ( material ) eyeCoreMaterialPool.push( material );
+
+					}
+
+					function releaseEyeHaloMaterial( material ) {
+
+						if ( material ) eyeHaloMaterialPool.push( material );
 
 					}
 
@@ -8503,7 +8529,7 @@
 						target.set(
 							( pixelX / imgWidth - 0.5 ) * planeWidth,
 							( 1 - pixelY / imgHeight ) * planeHeight,
-							0.012
+							0.02
 						);
 
 						return target;
@@ -8521,12 +8547,20 @@
 
 						for ( const eye of ZOMBIE_EYE_PIXELS ) {
 
-							const glow = new THREE.Mesh( sharedEyeGlowGeometry, acquireEyeGlowMaterial( eyeColor ) );
 							spritePixelToLocal( eye.x, eye.y, eyePos, planeWidth, planeHeight, imgWidth, imgHeight );
-							glow.position.copy( eyePos );
-							glow.renderOrder = 1;
-							group.add( glow );
-							eyeGlows.push( glow );
+
+							const halo = new THREE.Mesh( sharedEyeHaloGeometry, acquireEyeHaloMaterial( eyeColor ) );
+							halo.position.copy( eyePos );
+							halo.renderOrder = 2;
+							group.add( halo );
+							eyeGlows.push( halo );
+
+							const core = new THREE.Mesh( sharedEyeCoreGeometry, acquireEyeCoreMaterial( eyeColor ) );
+							core.position.copy( eyePos );
+							core.position.z = 0.026;
+							core.renderOrder = 3;
+							group.add( core );
+							eyeGlows.push( core );
 
 						}
 
@@ -8541,14 +8575,27 @@
 
 						if ( ! eyeGlows || eyeGlows.length === 0 ) return;
 
-						const pulse = 0.72 + 0.28 * Math.sin( time * 0.009 + zombie.userData.eyePulsePhase );
-						const scale = 0.94 + 0.1 * pulse;
-						const opacity = 0.65 + 0.3 * pulse;
+						const pulse = 0.78 + 0.22 * Math.sin( time * 0.011 + zombie.userData.eyePulsePhase );
+						const haloScale = 0.92 + 0.14 * pulse;
+						const haloOpacity = 0.55 + 0.35 * pulse;
+						const coreScale = 0.96 + 0.08 * pulse;
 
-						for ( const glow of eyeGlows ) {
+						for ( let i = 0; i < eyeGlows.length; i ++ ) {
 
-							glow.scale.setScalar( scale );
-							glow.material.opacity = opacity;
+							const glow = eyeGlows[ i ];
+							const isCore = i % 2 === 1;
+
+							if ( isCore ) {
+
+								glow.scale.setScalar( coreScale );
+								glow.material.opacity = 1;
+
+							} else {
+
+								glow.scale.setScalar( haloScale );
+								glow.material.opacity = haloOpacity;
+
+							}
 
 						}
 
@@ -8563,7 +8610,9 @@
 						for ( const glow of eyeGlows ) {
 
 							glow.parent.remove( glow );
-							releaseEyeGlowMaterial( glow.material );
+
+							if ( glow.material.map ) releaseEyeHaloMaterial( glow.material );
+							else releaseEyeCoreMaterial( glow.material );
 
 						}
 
@@ -9695,21 +9744,29 @@
 
 							}
 
-							if ( sharedEyeGlowGeometry ) {
+							if ( sharedEyeCoreGeometry ) {
 
-								sharedEyeGlowGeometry.dispose();
-								sharedEyeGlowGeometry = null;
-
-							}
-
-							if ( sharedEyeGlowTexture ) {
-
-								sharedEyeGlowTexture.dispose();
-								sharedEyeGlowTexture = null;
+								sharedEyeCoreGeometry.dispose();
+								sharedEyeCoreGeometry = null;
 
 							}
 
-							for ( const material of eyeGlowMaterialPool.splice( 0 ) ) material.dispose();
+							if ( sharedEyeHaloGeometry ) {
+
+								sharedEyeHaloGeometry.dispose();
+								sharedEyeHaloGeometry = null;
+
+							}
+
+							if ( sharedEyeHaloTexture ) {
+
+								sharedEyeHaloTexture.dispose();
+								sharedEyeHaloTexture = null;
+
+							}
+
+							for ( const material of eyeCoreMaterialPool.splice( 0 ) ) material.dispose();
+							for ( const material of eyeHaloMaterialPool.splice( 0 ) ) material.dispose();
 
 							dashSegmentGeometry.dispose();
 							projectileGeometry.dispose();
