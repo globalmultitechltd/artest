@@ -1047,7 +1047,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 21:11</div>
+		<div id="version">version: 21:19</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -2085,6 +2085,7 @@
 				const platformsHud = document.getElementById( 'platforms-hud' );
 				const platformsMovePanel = document.getElementById( 'platforms-move-panel' );
 				const bowlingHud = document.getElementById( 'bowling-hud' );
+				const bowlingPowerWrap = document.getElementById( 'bowling-power-wrap' );
 				const roomScaleSetupEl = document.getElementById( 'room-scale-setup' );
 
 				function showGameOverlayForSelection() {
@@ -2252,6 +2253,7 @@
 					platformsHud.classList.remove( 'visible' );
 					platformsMovePanel.classList.remove( 'visible' );
 					bowlingHud.classList.remove( 'visible' );
+					if ( bowlingPowerWrap ) bowlingPowerWrap.classList.remove( 'visible' );
 					for ( const button of document.querySelectorAll( '.rc-car-drive-panel .rc-drive-button, .platforms-drive-panel .platforms-drive-button' ) ) {
 
 						button.classList.remove( 'pressed' );
@@ -8441,12 +8443,13 @@
 				const PIN_HEIGHT = 0.14;
 				const PIN_SPACING = 0.075;
 				const PIN_ROW_STEP = PIN_SPACING * 0.866;
-				const MIN_LAUNCH_SPEED = 0.95;
-				const MAX_LAUNCH_SPEED = 3.85;
+				const MIN_LAUNCH_SPEED = 0.55;
+				const SPEED_AT_HALF_POWER = 4.75;
+				const MAX_LAUNCH_SPEED = 7.4;
 				const CHARGE_MAX_MS = 3000;
-				const POWER_FULL_EFFECT = 0.7;
-				const FRICTION = 2.4;
-				const STOP_SPEED = 0.08;
+				const POWER_LANE_MIN = 0.5;
+				const FRICTION = 1.55;
+				const STOP_SPEED = 0.06;
 				const HUD_PLACING = 'Point at the floor to place the bowling alley';
 				const HUD_READY = 'Hold anywhere to charge, release to roll';
 				const HUD_GAME_OVER = 'Game over! Tap to play again';
@@ -8621,9 +8624,17 @@
 
 					function powerToLaunchSpeed( power ) {
 
-						const effective = Math.min( 1, power / POWER_FULL_EFFECT );
+						if ( power < POWER_LANE_MIN ) {
 
-						return THREE.MathUtils.lerp( MIN_LAUNCH_SPEED, MAX_LAUNCH_SPEED, effective );
+							const t = power / POWER_LANE_MIN;
+
+							return THREE.MathUtils.lerp( MIN_LAUNCH_SPEED, SPEED_AT_HALF_POWER * 0.82, t );
+
+						}
+
+						const t = ( power - POWER_LANE_MIN ) / ( 1 - POWER_LANE_MIN );
+
+						return THREE.MathUtils.lerp( SPEED_AT_HALF_POWER, MAX_LAUNCH_SPEED, t );
 
 					}
 
