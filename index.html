@@ -637,6 +637,40 @@
 				display: block;
 			}
 
+			#zombies-death-flash {
+				display: none;
+				position: fixed;
+				inset: 0;
+				z-index: 10006;
+				align-items: center;
+				justify-content: center;
+				background: rgba(220, 38, 38, 0.72);
+				pointer-events: none;
+			}
+
+			#zombies-death-flash.visible {
+				display: flex;
+				animation: zombies-death-flash-fade 1s ease-out forwards;
+			}
+
+			#zombies-death-flash-text {
+				padding: 20px 28px;
+				max-width: min(92vw, 420px);
+				font-family: system-ui, sans-serif;
+				font-size: clamp(20px, 5vw, 28px);
+				font-weight: 800;
+				line-height: 1.35;
+				color: #fff;
+				text-align: center;
+				text-shadow: 0 2px 10px rgba(0, 0, 0, 0.85);
+			}
+
+			@keyframes zombies-death-flash-fade {
+				0% { opacity: 1; }
+				75% { opacity: 1; }
+				100% { opacity: 0; }
+			}
+
 			#zombies-controls {
 				display: none;
 				position: absolute;
@@ -1142,7 +1176,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 23:25</div>
+		<div id="version">version: 23:28</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1194,6 +1228,9 @@
 				<div id="bowling-power-percent">0%</div>
 			</div>
 			<div id="zombies-stats-hud">Lives: 5 · Level 1 · zombies left: 1</div>
+			<div id="zombies-death-flash" aria-hidden="true">
+				<div id="zombies-death-flash-text"></div>
+			</div>
 			<div id="world-builder-controls" aria-label="World Builder spawn controls">
 				<span class="control-label">Spawn</span>
 				<button class="spawn-type-button active" type="button" data-spawn-type="tree">Tree</button>
@@ -1222,8 +1259,8 @@
 			<div id="zombies-controls" aria-label="Zombies controls">
 				<label for="zombies-speed">
 					<span>Zombie speed</span>
-					<input type="range" id="zombies-speed" min="0.15" max="1.4" step="0.05" value="0.45" />
-					<span id="zombies-speed-value">0.45</span>
+					<input type="range" id="zombies-speed" min="0.15" max="1.4" step="0.05" value="0.15" disabled />
+					<span id="zombies-speed-value">0.15</span>
 				</label>
 			</div>
 
@@ -1305,6 +1342,8 @@
 			const ROOM_SCALE_STORAGE_KEY = 'artest-room-scale-v2';
 			const ROOM_SCALE_STORAGE_KEY_LEGACY = 'artest-room-scale-v1';
 			const BLOCK_SIZE = 0.2;
+			const ZOMBIES_SPEED_SLIDER_ENABLED = false;
+			const ZOMBIES_DEFAULT_SPEED = 0.15;
 
 			const miniGameMusic = new Audio( 'sounds/music.mp3' );
 			miniGameMusic.preload = 'auto';
@@ -2833,7 +2872,7 @@
 					collectItemsHud.classList.toggle( 'visible', selectedMiniGameId === 'collect-items' );
 					const isZombies = selectedMiniGameId === 'zombies';
 					zombiesHud.classList.toggle( 'visible', isZombies );
-					zombiesControls.classList.toggle( 'visible', isZombies );
+					zombiesControls.classList.toggle( 'visible', isZombies && ZOMBIES_SPEED_SLIDER_ENABLED );
 					bounceHud.classList.toggle( 'visible', selectedMiniGameId === 'bounce' );
 					bounceControls.classList.toggle( 'visible', selectedMiniGameId === 'bounce' );
 					const isRcCar = selectedMiniGameId === 'rc-car';
@@ -8174,7 +8213,7 @@
 				const ZOMBIE_HIT_RADIUS = 0.32;
 				const ZOMBIE_HITS_TO_KILL = 3;
 				const PLAYER_COLLISION_RADIUS = 0.38;
-				const DEFAULT_ZOMBIE_SPEED = 0.45;
+				const DEFAULT_ZOMBIE_SPEED = ZOMBIES_DEFAULT_SPEED;
 				const STARTING_LIVES = 5;
 				const HIT_COOLDOWN_SEC = 1.5;
 				const GROAN_MIN_INTERVAL = 4;
@@ -8205,6 +8244,7 @@
 					let pendingXRSelect = null;
 					let pendingRestartTap = null;
 					let xrSession = null;
+					let deathFlashTimeout = null;
 
 					const zombies = [];
 					const bulletTrails = [];
@@ -8234,6 +8274,8 @@
 					const zombiesHud = document.getElementById( 'zombies-hud' );
 					const zombiesStatsHud = document.getElementById( 'zombies-stats-hud' );
 					const zombiesControls = document.getElementById( 'zombies-controls' );
+					const zombiesDeathFlash = document.getElementById( 'zombies-death-flash' );
+					const zombiesDeathFlashText = document.getElementById( 'zombies-death-flash-text' );
 					const speedSlider = document.getElementById( 'zombies-speed' );
 					const speedValue = document.getElementById( 'zombies-speed-value' );
 					const shooterCrosshair = document.getElementById( 'shooter-crosshair' );
@@ -8604,6 +8646,37 @@
 
 					}
 
+					function hideLifeLostEffect() {
+
+						if ( deathFlashTimeout ) {
+
+							window.clearTimeout( deathFlashTimeout );
+							deathFlashTimeout = null;
+
+						}
+
+						if ( zombiesDeathFlash ) zombiesDeathFlash.classList.remove( 'visible' );
+
+					}
+
+					function showLifeLostEffect( livesRemaining ) {
+
+						if ( ! zombiesDeathFlash || ! zombiesDeathFlashText ) return;
+
+						hideLifeLostEffect();
+
+						zombiesDeathFlashText.textContent = 'You died. Lives left: ' + livesRemaining;
+						zombiesDeathFlash.classList.add( 'visible' );
+
+						deathFlashTimeout = window.setTimeout( () => {
+
+							zombiesDeathFlash.classList.remove( 'visible' );
+							deathFlashTimeout = null;
+
+						}, 1000 );
+
+					}
+
 					function onZombieCollision( index ) {
 
 						if ( hitCooldown > 0 ) return;
@@ -8613,17 +8686,19 @@
 
 						lives --;
 						playLifeLostSound();
+						showLifeLostEffect( lives );
 						hitCooldown = HIT_COOLDOWN_SEC;
 
 						if ( lives <= 0 ) {
 
-							onGameOver();
+							window.setTimeout( () => onGameOver(), 1000 );
 							return;
 
 						}
 
+						updateHud();
+
 						if ( zombies.length === 0 ) onLevelComplete();
-						else updateHud();
 
 					}
 
@@ -9199,9 +9274,15 @@
 							clearImpactParticles();
 
 							refreshWallPickMeshes();
-							zombieSpeed = parseFloat( speedSlider.value );
-							speedValue.textContent = zombieSpeed.toFixed( 2 );
-							speedSlider.addEventListener( 'input', onSpeedInput );
+							zombieSpeed = ZOMBIES_DEFAULT_SPEED;
+
+							if ( ZOMBIES_SPEED_SLIDER_ENABLED && speedSlider ) {
+
+								zombieSpeed = parseFloat( speedSlider.value );
+								if ( speedValue ) speedValue.textContent = zombieSpeed.toFixed( 2 );
+								speedSlider.addEventListener( 'input', onSpeedInput );
+
+							}
 
 							renderer.domElement.style.touchAction = 'none';
 							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
@@ -9220,7 +9301,12 @@
 
 							renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
 							renderer.domElement.style.touchAction = '';
-							speedSlider.removeEventListener( 'input', onSpeedInput );
+
+							if ( ZOMBIES_SPEED_SLIDER_ENABLED && speedSlider ) {
+
+								speedSlider.removeEventListener( 'input', onSpeedInput );
+
+							}
 
 							if ( xrSession ) {
 
@@ -9232,6 +9318,7 @@
 							pendingPointerShot = null;
 							pendingXRSelect = null;
 							pendingRestartTap = null;
+							hideLifeLostEffect();
 							shooterCrosshair.classList.remove( 'visible' );
 							if ( zombiesStatsHud ) zombiesStatsHud.classList.remove( 'visible' );
 							clearZombies();
