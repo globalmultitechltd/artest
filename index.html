@@ -1176,7 +1176,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 23:32</div>
+		<div id="version">version: 23:33</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -8249,6 +8249,9 @@
 					let pendingRestartTap = null;
 					let xrSession = null;
 					let deathFlashTimeout = null;
+					let mistGroup = null;
+					const mistLayers = [];
+					const mistTextures = [];
 
 					const zombies = [];
 					const bulletTrails = [];
@@ -8505,6 +8508,146 @@
 
 					}
 
+					function createMistTexture() {
+
+						const size = 256;
+						const canvas = document.createElement( 'canvas' );
+						canvas.width = size;
+						canvas.height = size;
+						const ctx = canvas.getContext( '2d' );
+
+						ctx.clearRect( 0, 0, size, size );
+
+						for ( let i = 0; i < 90; i ++ ) {
+
+							const x = Math.random() * size;
+							const y = Math.random() * size;
+							const radius = 18 + Math.random() * 52;
+							const gradient = ctx.createRadialGradient( x, y, 0, x, y, radius );
+
+							gradient.addColorStop( 0, 'rgba(210, 220, 235, 0.42)' );
+							gradient.addColorStop( 1, 'rgba(210, 220, 235, 0)' );
+
+							ctx.fillStyle = gradient;
+							ctx.beginPath();
+							ctx.arc( x, y, radius, 0, Math.PI * 2 );
+							ctx.fill();
+
+						}
+
+						const texture = new THREE.CanvasTexture( canvas );
+						texture.wrapS = THREE.RepeatWrapping;
+						texture.wrapT = THREE.RepeatWrapping;
+						texture.colorSpace = THREE.SRGBColorSpace;
+						mistTextures.push( texture );
+
+						return texture;
+
+					}
+
+					function getMistCoverageSize() {
+
+						if ( roomBounds ) {
+
+							return Math.max( roomBounds.halfExtents.x, roomBounds.halfExtents.z ) * 2.5;
+
+						}
+
+						return PLAY_AREA_RADIUS * 2.5;
+
+					}
+
+					function createFloorMist() {
+
+						removeFloorMist();
+
+						const coverage = getMistCoverageSize();
+						const layerConfigs = [
+							{ scale: 1.0, opacity: 0.24, speedX: 0.018, speedY: 0.006, repeat: 2.8, lift: 0.02 },
+							{ scale: 1.18, opacity: 0.16, speedX: -0.012, speedY: 0.009, repeat: 3.6, lift: 0.05 },
+							{ scale: 0.88, opacity: 0.2, speedX: 0.008, speedY: -0.005, repeat: 2.2, lift: 0.09 }
+						];
+
+						mistGroup = new THREE.Group();
+						mistGroup.name = 'zombies-floor-mist';
+
+						for ( const config of layerConfigs ) {
+
+							const texture = createMistTexture();
+							texture.repeat.set( config.repeat, config.repeat );
+
+							const material = new THREE.MeshBasicMaterial( {
+								map: texture,
+								color: 0xdde7f2,
+								transparent: true,
+								opacity: config.opacity,
+								depthWrite: false,
+								side: THREE.DoubleSide
+							} );
+
+							const layerSize = coverage * config.scale;
+							const mesh = new THREE.Mesh( new THREE.PlaneGeometry( layerSize, layerSize ), material );
+							mesh.rotation.x = - Math.PI / 2;
+							mesh.position.y = config.lift;
+							mesh.renderOrder = - 2;
+							mesh.userData.speedX = config.speedX;
+							mesh.userData.speedY = config.speedY;
+							mesh.userData.baseOpacity = config.opacity;
+							mistGroup.add( mesh );
+							mistLayers.push( mesh );
+
+						}
+
+						mistGroup.position.set( playCenter.x, floorY, playCenter.z );
+						scene.add( mistGroup );
+
+					}
+
+					function updateFloorMist( delta, time ) {
+
+						if ( mistLayers.length === 0 ) return;
+
+						for ( const layer of mistLayers ) {
+
+							const map = layer.material.map;
+
+							if ( map ) {
+
+								map.offset.x = ( map.offset.x + layer.userData.speedX * delta ) % 1;
+								map.offset.y = ( map.offset.y + layer.userData.speedY * delta ) % 1;
+
+							}
+
+							layer.material.opacity = layer.userData.baseOpacity * ( 0.82 + 0.18 * Math.sin( time * 0.0015 + layer.position.y * 12 ) );
+
+						}
+
+					}
+
+					function removeFloorMist() {
+
+						if ( mistGroup ) {
+
+							scene.remove( mistGroup );
+
+							for ( const layer of mistLayers ) {
+
+								layer.geometry.dispose();
+								layer.material.dispose();
+
+							}
+
+							mistGroup = null;
+
+						}
+
+						mistLayers.length = 0;
+
+						for ( const texture of mistTextures ) texture.dispose();
+						mistTextures.length = 0;
+
+					}
+
 					function ensureZombieAssets() {
 
 						if ( sharedZombieGeometry ) return;
@@ -8698,6 +8841,7 @@
 						floorY = y;
 						playReady = true;
 						autoDetectPlayerHeight();
+						createFloorMist();
 						startPlayingLevel( 1 );
 
 					}
@@ -9441,6 +9585,7 @@
 							pendingXRSelect = null;
 							pendingRestartTap = null;
 							hideLifeLostEffect();
+							removeFloorMist();
 							shooterCrosshair.classList.remove( 'visible' );
 							if ( zombiesStatsHud ) zombiesStatsHud.classList.remove( 'visible' );
 							clearZombies();
@@ -9511,6 +9656,7 @@
 
 								updateBulletTrails( delta );
 								updateImpactParticles( delta );
+								updateFloorMist( delta, timestamp );
 
 							}
 
