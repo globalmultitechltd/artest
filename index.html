@@ -14,7 +14,19 @@
 		<meta property="og:url" content="https://threejs.org/examples/webxr_ar_hittest.html">
 		<meta property="og:image" content="https://threejs.org/examples/screenshots/webxr_ar_hittest.jpg">
 		<style>
-			body { margin: 0; }
+			body { margin: 0; background: #0f172a; }
+
+			#three-canvas-host {
+				position: fixed;
+				inset: 0;
+				z-index: 0;
+			}
+
+			#three-canvas-host canvas {
+				display: block;
+				width: 100%;
+				height: 100%;
+			}
 			#version {
 				position: fixed;
 				top: 0;
@@ -78,6 +90,28 @@
 
 			#setup-room-scale-btn:active {
 				background: rgba(30, 41, 59, 0.95);
+				transform: scale(0.98);
+			}
+
+			#start-sim-ar-btn {
+				min-width: min(92vw, 340px);
+				padding: 16px 28px;
+				font-family: system-ui, sans-serif;
+				font-size: 16px;
+				font-weight: 700;
+				letter-spacing: 0.04em;
+				text-transform: uppercase;
+				color: #fff;
+				background: rgba(22, 101, 52, 0.92);
+				border: 2px solid rgba(255, 255, 255, 0.55);
+				border-radius: 14px;
+				box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+				cursor: pointer;
+				touch-action: manipulation;
+			}
+
+			#start-sim-ar-btn:active {
+				background: rgba(21, 128, 61, 0.95);
 				transform: scale(0.98);
 			}
 
@@ -284,6 +318,61 @@
 
 			#room-scale-setup.visible {
 				display: block;
+			}
+
+			#sim-ar-help {
+				position: fixed;
+				left: 12px;
+				bottom: 12px;
+				display: none;
+				padding: 10px 12px;
+				max-width: min(92vw, 440px);
+				font-family: system-ui, sans-serif;
+				font-size: 12px;
+				line-height: 1.35;
+				color: #dbeafe;
+				background: rgba(2, 6, 23, 0.82);
+				border: 1px solid rgba(148, 163, 184, 0.4);
+				border-radius: 10px;
+				z-index: 96;
+				pointer-events: none;
+			}
+
+			#sim-ar-help.visible {
+				display: block;
+			}
+
+			#ar-exit-btn {
+				position: fixed;
+				top: 12px;
+				right: 12px;
+				display: none;
+				align-items: center;
+				justify-content: center;
+				width: 44px;
+				height: 44px;
+				padding: 0;
+				font-family: system-ui, sans-serif;
+				font-size: 30px;
+				font-weight: 700;
+				line-height: 1;
+				color: #fff;
+				background: #dc2626;
+				border: 2px solid #fff;
+				border-radius: 50%;
+				box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+				cursor: pointer;
+				z-index: 10005;
+				touch-action: manipulation;
+			}
+
+			#ar-exit-btn.visible {
+				display: inline-flex;
+			}
+
+			#ar-exit-btn:active {
+				background: #b91c1c;
+				transform: scale( 0.96 );
 			}
 
 			#room-scale-hud {
@@ -1047,7 +1136,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 21:19</div>
+		<div id="version">version: 22:46</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1064,6 +1153,7 @@
 			</div>
 			<div id="home-actions">
 				<button id="setup-room-scale-btn" type="button">Setup room scale</button>
+				<button id="start-sim-ar-btn" type="button">Start simulated AR</button>
 				<div id="room-scale-persistence" class="hidden" aria-label="Room scale storage">
 					<label>Room scale presets</label>
 					<div id="room-scale-preset-list"></div>
@@ -1086,6 +1176,8 @@
 		<div id="zombies-hud">Stand up straight in the middle of the play area, then tap to calibrate</div>
 		<div id="rc-car-hud">Point at the floor to place your RC car</div>
 		<div id="platforms-hud">Jump across platforms to reach the green exit on the far wall</div>
+		<button id="ar-exit-btn" type="button" aria-label="Exit to home screen" title="Exit to home">×</button>
+		<div id="sim-ar-help" aria-hidden="true">Sim AR: Arrow keys move, C crouch, right-drag look, left-click or E to place/interact. Tap × (top right) to return home.</div>
 
 		<div id="ar-overlay">
 			<div id="bounce-hud">Hits: 0</div>
@@ -1212,6 +1304,52 @@
 			miniGameMusic.preload = 'auto';
 			miniGameMusic.loop = true;
 			miniGameMusic.volume = 0.45;
+			let pendingSessionMode = 'xr';
+			let activeSessionMode = 'none';
+			let realXRGetSession = null;
+			let realXRGetReferenceSpace = null;
+			let simRuntime = null;
+			let simEnvironmentGroup = null;
+			let savedRendererClearColor = null;
+			let savedRendererClearAlpha = null;
+			const appSession = new EventTarget();
+
+			function dispatchAppSessionStart() {
+
+				appSession.dispatchEvent( new Event( 'sessionstart' ) );
+
+			}
+
+			function dispatchAppSessionEnd() {
+
+				appSession.dispatchEvent( new Event( 'sessionend' ) );
+
+			}
+
+			function returnToHomeScreen() {
+
+				if ( activeSessionMode === 'sim' && simRuntime ) {
+
+					simRuntime.stop();
+					return;
+
+				}
+
+				const xrSession = realXRGetSession ? realXRGetSession() : null;
+				if ( xrSession ) {
+
+					xrSession.end();
+					return;
+
+				}
+
+				if ( activeSessionMode !== 'none' ) {
+
+					dispatchAppSessionEnd();
+
+				}
+
+			}
 
 			function playMiniGameMusic() {
 
@@ -1227,11 +1365,493 @@
 
 			}
 
+			function isEditableElement( element ) {
+
+				if ( ! element ) return false;
+				const tagName = element.tagName;
+				return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || element.isContentEditable;
+
+			}
+
+			function createSimulatedARRuntime() {
+
+				const keyState = {
+					ArrowUp: false,
+					ArrowDown: false,
+					ArrowLeft: false,
+					ArrowRight: false,
+					KeyC: false
+				};
+				const floorY = 0;
+				const rayOrigin = new THREE.Vector3();
+				const rayDirection = new THREE.Vector3();
+				const hitPosition = new THREE.Vector3();
+				const hitQuaternion = new THREE.Quaternion();
+				const hitScale = new THREE.Vector3( 1, 1, 1 );
+				const up = new THREE.Vector3( 0, 1, 0 );
+				const targetRayEuler = new THREE.Euler( 0, 0, 0, 'YXZ' );
+				const targetRayMatrix = new THREE.Matrix4();
+				const hitMatrix = new THREE.Matrix4();
+				const posePosition = new THREE.Vector3();
+				const poseQuaternion = new THREE.Quaternion();
+				const poseScale = new THREE.Vector3();
+				const referenceSpace = { type: 'sim-local-floor' };
+				const viewerSpace = { type: 'sim-viewer' };
+				const targetRaySpace = { type: 'sim-target-ray' };
+				const inputSource = { handedness: 'none', targetRayMode: 'tracked-pointer', targetRaySpace };
+				const state = {
+					active: false,
+					lookDragging: false,
+					mouseLookSensitivity: 0.0022,
+					moveSpeed: 1.95,
+					crouchSpeed: 1.15,
+					standingHeight: 1.6,
+					crouchHeight: 1.05,
+					eyeHeight: 1.6,
+					position: new THREE.Vector3( 0, 0, 1.8 ),
+					yaw: Math.PI,
+					pitch: - 0.08,
+					lastTimestamp: 0,
+					hitValid: false,
+					ending: false,
+					hitTestSources: new Set(),
+					listeners: new Map()
+				};
+
+				function matrixToXRPose( matrix ) {
+
+					matrix.decompose( posePosition, poseQuaternion, poseScale );
+					return {
+						transform: {
+							position: {
+								x: posePosition.x,
+								y: posePosition.y,
+								z: posePosition.z
+							},
+							orientation: {
+								x: poseQuaternion.x,
+								y: poseQuaternion.y,
+								z: poseQuaternion.z,
+								w: poseQuaternion.w
+							},
+							matrix: matrix.elements
+						}
+					};
+
+				}
+
+				const hitResult = {
+					getPose() {
+
+						if ( ! state.hitValid ) return null;
+						return matrixToXRPose( hitMatrix );
+
+					}
+				};
+				const frame = {
+					getHitTestResults( source ) {
+
+						if ( ! state.active || ! source || source._cancelled || ! state.hitValid ) return [];
+						return [ hitResult ];
+
+					},
+					getPose( space ) {
+
+						if ( ! state.active ) return null;
+
+						if ( space === targetRaySpace || space === viewerSpace || space === referenceSpace ) {
+
+							return matrixToXRPose( targetRayMatrix );
+
+						}
+
+						return null;
+
+					}
+				};
+
+				const session = {
+					addEventListener( type, listener ) {
+
+						if ( ! state.listeners.has( type ) ) state.listeners.set( type, new Set() );
+						state.listeners.get( type ).add( listener );
+
+					},
+					removeEventListener( type, listener ) {
+
+						const set = state.listeners.get( type );
+						if ( set ) set.delete( listener );
+
+					},
+					requestReferenceSpace( type ) {
+
+						return Promise.resolve( type === 'viewer' ? viewerSpace : referenceSpace );
+
+					},
+					requestHitTestSource() {
+
+						const source = {
+							_cancelled: false,
+							cancel() {
+
+								source._cancelled = true;
+								state.hitTestSources.delete( source );
+
+							}
+						};
+						state.hitTestSources.add( source );
+						return Promise.resolve( source );
+
+					},
+					end() {
+
+						if ( ! state.active ) return Promise.resolve();
+						stop();
+						return Promise.resolve();
+
+					}
+				};
+
+				function emitSessionEvent( type, event = {} ) {
+
+					const listeners = state.listeners.get( type );
+					if ( ! listeners ) return;
+
+					for ( const listener of [ ...listeners ] ) {
+
+						listener( event );
+
+					}
+
+				}
+
+				function updateCameraPose() {
+
+					const crouchHeld = keyState.KeyC;
+					const targetEyeHeight = crouchHeld ? state.crouchHeight : state.standingHeight;
+					state.eyeHeight += ( targetEyeHeight - state.eyeHeight ) * 0.18;
+					camera.position.set( state.position.x, floorY + state.eyeHeight, state.position.z );
+					camera.rotation.order = 'YXZ';
+					camera.rotation.y = state.yaw;
+					camera.rotation.x = state.pitch;
+					camera.rotation.z = 0;
+					camera.updateMatrixWorld( true );
+
+				}
+
+				function updateHitPose() {
+
+					camera.getWorldPosition( rayOrigin );
+					camera.getWorldDirection( rayDirection );
+
+					const epsilon = 1e-5;
+					if ( Math.abs( rayDirection.y ) < epsilon ) {
+
+						state.hitValid = false;
+						return;
+
+					}
+
+					const distance = ( floorY - rayOrigin.y ) / rayDirection.y;
+					if ( distance <= 0 ) {
+
+						state.hitValid = false;
+						return;
+
+					}
+
+					hitPosition.copy( rayOrigin ).addScaledVector( rayDirection, distance );
+					const planarLengthSq = rayDirection.x * rayDirection.x + rayDirection.z * rayDirection.z;
+
+					if ( planarLengthSq < epsilon ) hitQuaternion.identity();
+					else hitQuaternion.setFromAxisAngle( up, Math.atan2( rayDirection.x, rayDirection.z ) );
+
+					hitMatrix.compose( hitPosition, hitQuaternion, hitScale );
+					state.hitValid = true;
+
+				}
+
+				function triggerSelectPulse() {
+
+					if ( ! state.active ) return;
+
+					const event = { inputSource };
+					emitSessionEvent( 'selectstart', event );
+					emitSessionEvent( 'select', event );
+					emitSessionEvent( 'selectend', event );
+					controller1.dispatchEvent( { type: 'select' } );
+
+				}
+
+				function shouldBlockUI( event ) {
+
+					if ( ! event || ! event.target ) return false;
+					if ( isEditableElement( event.target ) ) return true;
+					return !! ( event.target.closest && event.target.closest( '#ar-overlay' ) );
+
+				}
+
+				function onKeyDown( event ) {
+
+					if ( ! state.active ) return;
+					if ( isEditableElement( event.target ) ) return;
+
+					if ( event.code in keyState ) {
+
+						keyState[ event.code ] = true;
+						event.preventDefault();
+						return;
+
+					}
+
+					if ( event.code === 'KeyE' ) {
+
+						event.preventDefault();
+						triggerSelectPulse();
+						return;
+
+					}
+
+					if ( event.code === 'Escape' ) {
+
+						event.preventDefault();
+						returnToHomeScreen();
+
+					}
+
+				}
+
+				function onKeyUp( event ) {
+
+					if ( event.code in keyState ) keyState[ event.code ] = false;
+
+				}
+
+				function onPointerDown( event ) {
+
+					if ( ! state.active || shouldBlockUI( event ) ) return;
+
+					if ( event.button === 2 ) {
+
+						state.lookDragging = true;
+						event.preventDefault();
+						event.stopPropagation();
+						return;
+
+					}
+
+					if ( event.button !== 0 ) {
+
+						event.preventDefault();
+						event.stopPropagation();
+						return;
+
+					}
+
+					triggerSelectPulse();
+
+				}
+
+				function showEnvironment() {
+
+					if ( simEnvironmentGroup && ! simEnvironmentGroup.parent ) {
+
+						scene.add( simEnvironmentGroup );
+						persistentSceneObjects.add( simEnvironmentGroup );
+
+					}
+
+					scene.background = new THREE.Color( 0xb8c9dc );
+					camera.far = 120;
+					camera.updateProjectionMatrix();
+					savedRendererClearColor = renderer.getClearColor( new THREE.Color() );
+					savedRendererClearAlpha = renderer.getClearAlpha();
+					renderer.setClearColor( 0xb8c9dc, 1 );
+					renderer.setClearAlpha( 1 );
+
+				}
+
+				function hideEnvironment() {
+
+					if ( simEnvironmentGroup && simEnvironmentGroup.parent ) {
+
+						scene.remove( simEnvironmentGroup );
+						persistentSceneObjects.delete( simEnvironmentGroup );
+
+					}
+
+					scene.background = null;
+					camera.far = 20;
+					camera.updateProjectionMatrix();
+
+					if ( savedRendererClearColor ) {
+
+						renderer.setClearColor( savedRendererClearColor, savedRendererClearAlpha );
+						savedRendererClearColor = null;
+						savedRendererClearAlpha = null;
+
+					} else {
+
+						renderer.setClearColor( 0x000000, 0 );
+						renderer.setClearAlpha( 0 );
+
+					}
+
+				}
+
+				function onPointerMove( event ) {
+
+					if ( ! state.active || ! state.lookDragging ) return;
+
+					state.yaw -= event.movementX * state.mouseLookSensitivity;
+					state.pitch -= event.movementY * state.mouseLookSensitivity;
+					state.pitch = Math.max( - 1.35, Math.min( 1.35, state.pitch ) );
+					event.preventDefault();
+					event.stopPropagation();
+
+				}
+
+				function onPointerUp( event ) {
+
+					if ( ! state.active ) return;
+
+					if ( event.button === 2 ) {
+
+						state.lookDragging = false;
+						event.preventDefault();
+						event.stopPropagation();
+
+					}
+
+				}
+
+				function onContextMenu( event ) {
+
+					if ( ! state.active ) return;
+					event.preventDefault();
+
+				}
+
+				function step( timestamp ) {
+
+					if ( ! state.active ) return;
+
+					if ( ! state.lastTimestamp ) state.lastTimestamp = timestamp;
+					const delta = Math.min( Math.max( ( timestamp - state.lastTimestamp ) / 1000, 0 ), 0.05 );
+					state.lastTimestamp = timestamp;
+
+					const speed = keyState.KeyC ? state.crouchSpeed : state.moveSpeed;
+					let moveX = 0;
+					let moveZ = 0;
+
+					if ( keyState.ArrowUp ) moveZ -= 1;
+					if ( keyState.ArrowDown ) moveZ += 1;
+					if ( keyState.ArrowLeft ) moveX -= 1;
+					if ( keyState.ArrowRight ) moveX += 1;
+
+					if ( moveX !== 0 || moveZ !== 0 ) {
+
+						const length = Math.hypot( moveX, moveZ ) || 1;
+						moveX /= length;
+						moveZ /= length;
+
+						const sinYaw = Math.sin( state.yaw );
+						const cosYaw = Math.cos( state.yaw );
+						const worldX = moveX * cosYaw + moveZ * sinYaw;
+						const worldZ = moveZ * cosYaw - moveX * sinYaw;
+
+						state.position.x += worldX * speed * delta;
+						state.position.z += worldZ * speed * delta;
+
+					}
+
+					updateCameraPose();
+					targetRayEuler.set( state.pitch, state.yaw, 0 );
+					targetRayMatrix.makeRotationFromEuler( targetRayEuler );
+					targetRayMatrix.setPosition( camera.position );
+					updateHitPose();
+
+				}
+
+				function start() {
+
+					if ( state.active ) return;
+
+					state.active = true;
+					state.ending = false;
+					state.lookDragging = false;
+					state.lastTimestamp = 0;
+					state.position.set( 0, 0, 2.2 );
+					state.yaw = Math.PI;
+					state.pitch = - 0.35;
+					state.eyeHeight = state.standingHeight;
+					state.hitValid = false;
+
+					for ( const code of Object.keys( keyState ) ) keyState[ code ] = false;
+
+					window.addEventListener( 'keydown', onKeyDown );
+					window.addEventListener( 'keyup', onKeyUp );
+					window.addEventListener( 'pointermove', onPointerMove, true );
+					window.addEventListener( 'pointerup', onPointerUp, true );
+					window.addEventListener( 'pointercancel', onPointerUp, true );
+					renderer.domElement.addEventListener( 'pointerdown', onPointerDown, true );
+					renderer.domElement.addEventListener( 'contextmenu', onContextMenu, true );
+					updateCameraPose();
+					updateHitPose();
+					showEnvironment();
+
+					pendingSessionMode = 'sim';
+					dispatchAppSessionStart();
+
+				}
+
+				function stop() {
+
+					if ( ! state.active || state.ending ) return;
+					state.ending = true;
+
+					hideEnvironment();
+					emitSessionEvent( 'end', {} );
+
+					state.active = false;
+					state.lookDragging = false;
+					state.lastTimestamp = 0;
+					state.hitValid = false;
+
+					for ( const source of [ ...state.hitTestSources ] ) source.cancel();
+					state.hitTestSources.clear();
+					state.listeners.clear();
+
+					window.removeEventListener( 'keydown', onKeyDown );
+					window.removeEventListener( 'keyup', onKeyUp );
+					window.removeEventListener( 'pointermove', onPointerMove, true );
+					window.removeEventListener( 'pointerup', onPointerUp, true );
+					window.removeEventListener( 'pointercancel', onPointerUp, true );
+					renderer.domElement.removeEventListener( 'pointerdown', onPointerDown, true );
+					renderer.domElement.removeEventListener( 'contextmenu', onContextMenu, true );
+
+					dispatchAppSessionEnd();
+
+				}
+
+				return {
+					state,
+					session,
+					frame,
+					referenceSpace,
+					start,
+					stop,
+					step
+				};
+
+			}
+
 			init();
 
 			function init() {
 
 				container = document.createElement( 'div' );
+				container.id = 'three-canvas-host';
 				document.body.appendChild( container );
 
 				scene = new THREE.Scene();
@@ -1251,6 +1871,35 @@
 				renderer.setAnimationLoop( animate );
 				renderer.xr.enabled = true;
 				container.appendChild( renderer.domElement );
+				realXRGetSession = renderer.xr.getSession.bind( renderer.xr );
+				realXRGetReferenceSpace = renderer.xr.getReferenceSpace.bind( renderer.xr );
+				renderer.xr.getSession = function () {
+
+					if ( activeSessionMode === 'sim' && simRuntime ) return simRuntime.session;
+					return realXRGetSession();
+
+				};
+				renderer.xr.getReferenceSpace = function () {
+
+					if ( activeSessionMode === 'sim' && simRuntime ) return simRuntime.referenceSpace;
+					return realXRGetReferenceSpace();
+
+				};
+
+				simEnvironmentGroup = new THREE.Group();
+				simEnvironmentGroup.name = 'sim-ar-environment';
+				const simGround = new THREE.Mesh(
+					new THREE.PlaneGeometry( 40, 40 ),
+					new THREE.MeshBasicMaterial( { color: 0x475569 } )
+				);
+				simGround.rotation.x = - Math.PI / 2;
+				simEnvironmentGroup.add( simGround );
+				const simGrid = new THREE.GridHelper( 40, 40, 0xe2e8f0, 0x334155 );
+				simGrid.position.y = 0.004;
+				simEnvironmentGroup.add( simGrid );
+				const simSun = new THREE.DirectionalLight( 0xffffff, 1.35 );
+				simSun.position.set( 4, 8, 2 );
+				simEnvironmentGroup.add( simSun );
 
 				//
 
@@ -1269,6 +1918,7 @@
 				controller2 = renderer.xr.getController( 1 );
 				scene.add( controller2 );
 				persistentSceneObjects.add( controller2 );
+				simRuntime = createSimulatedARRuntime();
 
 				registerMiniGame( createHitTestPlacementGame( {
 					id: 'world-builder',
@@ -1966,6 +2616,7 @@
 				const arButton = document.getElementById( 'ARButton' );
 				const homeActions = document.getElementById( 'home-actions' );
 				const setupRoomScaleBtn = document.getElementById( 'setup-room-scale-btn' );
+				const startSimArBtn = document.getElementById( 'start-sim-ar-btn' );
 
 				if ( arButton && homeActions ) {
 
@@ -1976,6 +2627,7 @@
 					arButton.addEventListener( 'click', ( event ) => {
 
 						if ( event.isTrusted ) standaloneRoomScaleSetup = false;
+						if ( event.isTrusted ) pendingSessionMode = 'xr';
 
 					}, true );
 
@@ -1986,7 +2638,19 @@
 					setupRoomScaleBtn.addEventListener( 'click', () => {
 
 						standaloneRoomScaleSetup = true;
+						pendingSessionMode = 'xr';
 						arButton.click();
+
+					} );
+
+				}
+
+				if ( startSimArBtn ) {
+
+					startSimArBtn.addEventListener( 'click', () => {
+
+						standaloneRoomScaleSetup = false;
+						if ( simRuntime ) simRuntime.start();
 
 					} );
 
@@ -2087,6 +2751,22 @@
 				const bowlingHud = document.getElementById( 'bowling-hud' );
 				const bowlingPowerWrap = document.getElementById( 'bowling-power-wrap' );
 				const roomScaleSetupEl = document.getElementById( 'room-scale-setup' );
+				const simHelp = document.getElementById( 'sim-ar-help' );
+				const arExitBtn = document.getElementById( 'ar-exit-btn' );
+
+				if ( arExitBtn ) {
+
+					arExitBtn.addEventListener( 'click', ( event ) => {
+
+						event.preventDefault();
+						event.stopPropagation();
+						returnToHomeScreen();
+
+					} );
+
+					arExitBtn.addEventListener( 'beforexrselect', ( event ) => event.preventDefault() );
+
+				}
 
 				function showGameOverlayForSelection() {
 
@@ -2165,6 +2845,20 @@
 
 				renderer.xr.addEventListener( 'sessionstart', () => {
 
+					pendingSessionMode = 'xr';
+					dispatchAppSessionStart();
+
+				} );
+
+				renderer.xr.addEventListener( 'sessionend', () => {
+
+					dispatchAppSessionEnd();
+
+				} );
+
+				appSession.addEventListener( 'sessionstart', () => {
+
+					activeSessionMode = pendingSessionMode;
 					const isStandaloneRoomScale = standaloneRoomScaleSetup;
 
 					if ( ! isStandaloneRoomScale ) playMiniGameMusic();
@@ -2174,6 +2868,8 @@
 					if ( roomScaleCheckbox ) roomScaleCheckbox.disabled = true;
 					if ( wallFloorTexturesCheckbox ) wallFloorTexturesCheckbox.disabled = true;
 					arOverlay.classList.add( 'visible' );
+					if ( simHelp ) simHelp.classList.toggle( 'visible', activeSessionMode === 'sim' );
+					if ( arExitBtn ) arExitBtn.classList.add( 'visible' );
 
 					const gameContext = {
 						scene,
@@ -2212,8 +2908,9 @@
 
 				} );
 
-				renderer.xr.addEventListener( 'sessionend', () => {
+				appSession.addEventListener( 'sessionend', () => {
 
+					const wasSimulatedSession = activeSessionMode === 'sim';
 					stopMiniGameMusic();
 
 					if ( activeRoomScaleSetup ) {
@@ -2265,6 +2962,18 @@
 					miniGameSelect.disabled = false;
 					if ( roomScaleCheckbox ) roomScaleCheckbox.disabled = false;
 					if ( wallFloorTexturesCheckbox ) wallFloorTexturesCheckbox.disabled = false;
+					if ( simHelp ) simHelp.classList.remove( 'visible' );
+					if ( arExitBtn ) arExitBtn.classList.remove( 'visible' );
+					activeSessionMode = 'none';
+					pendingSessionMode = 'xr';
+
+					if ( wasSimulatedSession ) {
+
+						camera.position.set( 0, 0, 0 );
+						camera.rotation.set( 0, 0, 0 );
+						camera.updateMatrixWorld( true );
+
+					}
 
 					const arButton = document.getElementById( 'ARButton' );
 					if ( arButton && arButton.textContent === 'START AR' ) {
@@ -3375,7 +4084,7 @@
 
 					reticle = new THREE.Mesh(
 						new THREE.RingGeometry( 0.15, 0.2, 32 ).rotateX( - Math.PI / 2 ),
-						new THREE.MeshBasicMaterial()
+						new THREE.MeshBasicMaterial( { color: 0x38bdf8, transparent: true, opacity: 0.95 } )
 					);
 					reticle.matrixAutoUpdate = false;
 					reticle.visible = false;
@@ -9657,6 +10366,13 @@
 			//
 
 			function animate( timestamp, frame ) {
+
+				if ( activeSessionMode === 'sim' && simRuntime ) {
+
+					simRuntime.step( timestamp );
+					frame = simRuntime.frame;
+
+				}
 
 				if ( activeRoomScaleSetup ) {
 
