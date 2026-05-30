@@ -1174,7 +1174,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 11:55</div>
+		<div id="version">version: 12:00</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -8239,6 +8239,8 @@
 				const MIN_SPAWN_PLAYER_DIST = 1.1;
 				const MIN_ZOMBIE_SEPARATION = 0.55;
 				const MAX_SPAWN_ATTEMPTS = 48;
+				const SPAWN_BEHIND_ARC = Math.PI * 0.82;
+				const SPAWN_BEHIND_DOT_MAX = -0.12;
 				const ZOMBIE_HIT_RADIUS = 0.32;
 				const ZOMBIE_HITS_TO_KILL = 3;
 				const PLAYER_COLLISION_RADIUS = 0.38;
@@ -9135,26 +9137,102 @@
 
 					}
 
-					function randomFloorPosition( target ) {
+					function getPlayerLookForwardXZ() {
+
+						const viewCamera = getViewCamera();
+						viewCamera.getWorldDirection( forward );
+						forward.y = 0;
+
+						if ( forward.lengthSq() < 1e-6 ) forward.set( 0, 0, - 1 );
+						else forward.normalize();
+
+						return forward;
+
+					}
+
+					function isBehindPlayer( point, player ) {
+
+						getPlayerLookForwardXZ();
+						const dx = point.x - player.x;
+						const dz = point.z - player.z;
+
+						return ( dx * forward.x + dz * forward.z ) <= SPAWN_BEHIND_DOT_MAX;
+
+					}
+
+					function getMaxSpawnDistance() {
 
 						if ( roomBounds ) {
 
-							roomBounds.getRandomPerimeterFloorPoint( target, ROOM_SPAWN_WALL_INSET );
+							return Math.min( roomBounds.halfExtents.x, roomBounds.halfExtents.z ) * 1.75;
+
+						}
+
+						return PLAY_AREA_RADIUS * 0.92;
+
+					}
+
+					function nudgeSpawnIntoPlayArea( target ) {
+
+						if ( isInsidePlayArea( target ) ) return target;
+
+						for ( let i = 0; i < 12; i ++ ) {
+
+							target.lerp( playCenter, 0.12 );
+							target.y = floorY;
+
+							if ( isInsidePlayArea( target ) ) return target;
+
+						}
+
+						target.copy( playCenter );
+						target.y = floorY;
+
+						return target;
+
+					}
+
+					function randomSpawnBehindPlayer( target, spreadIndex, spreadCount ) {
+
+						const player = getPlayerPosition();
+						getPlayerLookForwardXZ();
+
+						const behindAngle = Math.atan2( - forward.x, - forward.z );
+						const arc = SPAWN_BEHIND_ARC;
+						let angle;
+
+						if ( spreadCount <= 1 ) {
+
+							angle = behindAngle + ( Math.random() - 0.5 ) * arc;
 
 						} else {
 
-							const angle = Math.random() * Math.PI * 2;
-							const radius = 0.65 + Math.random() * ( PLAY_AREA_RADIUS - 0.65 );
+							const t = spreadIndex / Math.max( 1, spreadCount - 1 );
+							angle = behindAngle - arc * 0.5 + arc * t + ( Math.random() - 0.5 ) * ( arc / spreadCount ) * 0.55;
+
+						}
+
+						const minDist = MIN_SPAWN_PLAYER_DIST;
+						const maxDist = getMaxSpawnDistance();
+						const dist = minDist + Math.random() * Math.max( 0.35, maxDist - minDist );
+
+						target.set(
+							player.x + Math.cos( angle ) * dist,
+							floorY,
+							player.z + Math.sin( angle ) * dist
+						);
+
+						if ( ! isBehindPlayer( target, player ) ) {
 
 							target.set(
-								playCenter.x + Math.cos( angle ) * radius,
+								player.x - forward.x * dist,
 								floorY,
-								playCenter.z + Math.sin( angle ) * radius
+								player.z - forward.z * dist
 							);
 
 						}
 
-						target.y = floorY;
+						nudgeSpawnIntoPlayArea( target );
 
 						return target;
 
@@ -9163,6 +9241,8 @@
 					function isValidSpawn( point, placed, player ) {
 
 						if ( ! isInsidePlayArea( point ) ) return false;
+
+						if ( ! isBehindPlayer( point, player ) ) return false;
 
 						const dx = point.x - player.x;
 						const dz = point.z - player.z;
@@ -9182,14 +9262,14 @@
 
 					}
 
-					function spawnEnemyAt( factory, placed ) {
+					function spawnEnemyAt( factory, placed, spreadIndex, spreadCount ) {
 
 						const player = getPlayerPosition();
 						let positioned = false;
 
 						for ( let attempt = 0; attempt < MAX_SPAWN_ATTEMPTS; attempt ++ ) {
 
-							randomFloorPosition( spawnPos );
+							randomSpawnBehindPlayer( spawnPos, spreadIndex, spreadCount );
 
 							if ( isValidSpawn( spawnPos, [ ...enemies, ...placed ], player ) ) {
 
@@ -9200,7 +9280,7 @@
 
 						}
 
-						if ( ! positioned ) randomFloorPosition( spawnPos );
+						if ( ! positioned ) randomSpawnBehindPlayer( spawnPos, spreadIndex, spreadCount );
 
 						const enemy = factory();
 
@@ -9225,16 +9305,20 @@
 					function spawnLevelEnemies( zombieCount, batCount ) {
 
 						const placed = [];
+						const totalSpawns = zombieCount + batCount;
+						let spreadIndex = 0;
 
 						for ( let i = 0; i < zombieCount; i ++ ) {
 
-							spawnEnemyAt( createZombieGroup, placed );
+							spawnEnemyAt( createZombieGroup, placed, spreadIndex, totalSpawns );
+							spreadIndex ++;
 
 						}
 
 						for ( let i = 0; i < batCount; i ++ ) {
 
-							spawnEnemyAt( createBatGroup, placed );
+							spawnEnemyAt( createBatGroup, placed, spreadIndex, totalSpawns );
+							spreadIndex ++;
 
 						}
 
