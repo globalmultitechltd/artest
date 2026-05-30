@@ -1174,7 +1174,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 12:00</div>
+		<div id="version">version: 12:15</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -8345,6 +8345,7 @@
 						new Audio( 'sounds/zombie/hurt2.WAV' )
 					];
 					const zombieDeadSound = new Audio( 'sounds/zombie/dead.WAV' );
+					const batDeadSound = new Audio( 'sounds/zombie/bdeath.mp3' );
 					const zombieGroanSounds = [
 						new Audio( 'sounds/zombie/groan1.WAV' ),
 						new Audio( 'sounds/zombie/groan2.WAV' ),
@@ -8352,6 +8353,7 @@
 					];
 					for ( const sound of zombieHurtSounds ) sound.preload = 'auto';
 					zombieDeadSound.preload = 'auto';
+					batDeadSound.preload = 'auto';
 					for ( const sound of zombieGroanSounds ) sound.preload = 'auto';
 					const lifeLostSound = new Audio( 'sounds/life lost music.mp3' );
 					lifeLostSound.preload = 'auto';
@@ -9548,6 +9550,12 @@
 
 					}
 
+					function playBatDeadSound() {
+
+						playZombieSound( batDeadSound );
+
+					}
+
 					function playZombieGroan() {
 
 						const groan = zombieGroanSounds[ Math.floor( Math.random() * zombieGroanSounds.length ) ];
@@ -9902,7 +9910,9 @@
 
 						if ( enemy.userData.hitsRemaining <= 0 ) {
 
-							playZombieDeadSound();
+							if ( enemy.userData.enemyType === 'bat' ) playBatDeadSound();
+							else playZombieDeadSound();
+
 							removeEnemyAt( index );
 
 						} else {
@@ -10249,6 +10259,8 @@
 							}
 							zombieDeadSound.pause();
 							zombieDeadSound.currentTime = 0;
+							batDeadSound.pause();
+							batDeadSound.currentTime = 0;
 							for ( const sound of zombieGroanSounds ) {
 
 								sound.pause();
