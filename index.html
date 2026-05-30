@@ -1174,7 +1174,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 11:45</div>
+		<div id="version">version: 11:55</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -8271,7 +8271,13 @@
 				const BAT_HIT_RADIUS = 0.26;
 				const BAT_HITS_TO_KILL = 2;
 				const BAT_COLLISION_RADIUS = 0.34;
-				const BAT_FLY_BOB_AMPLITUDE = 0.12;
+				const BAT_FLY_BOB_AMPLITUDE = 0.2;
+				const BAT_SWOOP_MIN_RADIUS = 0.85;
+				const BAT_SWOOP_ANGULAR_SPEED = 3.05;
+				const BAT_SWOOP_PULL_IN = 0.36;
+				const BAT_SWOOP_DIVE_STRENGTH = 1.6;
+				const BAT_SWOOP_VERTICAL = 0.48;
+				const BAT_SWOOP_RADIUS_WOBBLE = 0.32;
 
 				function create( { scene, renderer, camera, roomBounds } ) {
 
@@ -8916,6 +8922,148 @@
 
 					}
 
+					function getPlayAreaSwoopRadius() {
+
+						if ( roomBounds ) {
+
+							return Math.min( roomBounds.halfExtents.x, roomBounds.halfExtents.z ) * 0.88;
+
+						}
+
+						return PLAY_AREA_RADIUS * 0.88;
+
+					}
+
+					function initBatSwoop( bat ) {
+
+						const offsetX = bat.position.x - playCenter.x;
+						const offsetZ = bat.position.z - playCenter.z;
+						const maxRadius = getPlayAreaSwoopRadius();
+
+						bat.userData.swoopAngle = Math.atan2( offsetZ, offsetX );
+						bat.userData.swoopDir = Math.random() < 0.5 ? 1 : -1;
+						bat.userData.swoopRadius = Math.max( Math.hypot( offsetX, offsetZ ), maxRadius * 0.88 );
+
+					}
+
+					function clampBatXZ( pos ) {
+
+						if ( roomBounds ) {
+
+							if ( roomBounds.containsPoint( pos ) ) return;
+
+							const pullX = playCenter.x - pos.x;
+							const pullZ = playCenter.z - pos.z;
+							const pullLen = Math.hypot( pullX, pullZ );
+
+							if ( pullLen < 1e-4 ) return;
+
+							const maxR = getPlayAreaSwoopRadius() * 0.92;
+							pos.x = playCenter.x - ( pullX / pullLen ) * maxR;
+							pos.z = playCenter.z - ( pullZ / pullLen ) * maxR;
+
+							return;
+
+						}
+
+						const dx = pos.x - playCenter.x;
+						const dz = pos.z - playCenter.z;
+						const dist = Math.hypot( dx, dz );
+						const maxR = PLAY_AREA_RADIUS * 0.92;
+
+						if ( dist > maxR ) {
+
+							pos.x = playCenter.x + ( dx / dist ) * maxR;
+							pos.z = playCenter.z + ( dz / dist ) * maxR;
+
+						}
+
+					}
+
+					function updateBatSwoop( bat, player, delta, time ) {
+
+						const maxRadius = getPlayAreaSwoopRadius();
+						const minRadius = BAT_SWOOP_MIN_RADIUS;
+						const distToPlayer = Math.hypot(
+							bat.position.x - player.x,
+							bat.position.z - player.z
+						);
+
+						const closeFactor = 1 - THREE.MathUtils.clamp(
+							( bat.userData.swoopRadius - minRadius ) / Math.max( maxRadius - minRadius, 0.01 ),
+							0,
+							1
+						);
+						const centerBlend = 0.1 + closeFactor * 0.42;
+
+						hitPos.set( player.x, floorY, player.z );
+						lookTarget.set( playCenter.x, floorY, playCenter.z );
+						lookTarget.lerp( hitPos, centerBlend );
+
+						bat.userData.swoopAngle += BAT_SWOOP_ANGULAR_SPEED * bat.userData.swoopDir * delta;
+
+						const desiredRadius = THREE.MathUtils.clamp(
+							distToPlayer * 0.62,
+							minRadius,
+							maxRadius * 0.98
+						);
+						bat.userData.swoopRadius += ( desiredRadius - bat.userData.swoopRadius ) * BAT_SWOOP_PULL_IN * delta;
+						bat.userData.swoopRadius = Math.max( minRadius, bat.userData.swoopRadius );
+
+						const orbitAngle = bat.userData.swoopAngle;
+						const radiusWobble = 1 + BAT_SWOOP_RADIUS_WOBBLE * Math.sin( orbitAngle * 2.5 + bat.userData.flyPhase );
+						const orbitRadius = bat.userData.swoopRadius * radiusWobble;
+						const swoopFlatten = 0.72 + 0.28 * Math.abs( Math.cos( orbitAngle * 1.25 + bat.userData.flyPhase ) );
+
+						hitPos.set(
+							lookTarget.x + Math.cos( orbitAngle ) * orbitRadius * swoopFlatten,
+							bat.position.y,
+							lookTarget.z + Math.sin( orbitAngle ) * orbitRadius
+						);
+
+						toPlayer.set( hitPos.x - bat.position.x, 0, hitPos.z - bat.position.z );
+						const toOrbitDist = toPlayer.length();
+						const moveSpeed = zombieSpeed * BAT_SPEED_MULT;
+
+						if ( toOrbitDist > 1e-4 ) {
+
+							toPlayer.normalize();
+							const step = Math.min( toOrbitDist, moveSpeed * delta );
+							bat.position.x += toPlayer.x * step;
+							bat.position.z += toPlayer.z * step;
+
+						}
+
+						const dive = Math.pow( Math.max( 0, Math.sin( orbitAngle * 2 + bat.userData.flyPhase ) ), 0.65 );
+
+						if ( dive > 0.05 ) {
+
+							hitPos.set( player.x - bat.position.x, 0, player.z - bat.position.z );
+							const diveDist = hitPos.length();
+
+							if ( diveDist > 1e-4 ) {
+
+								hitPos.normalize();
+								const diveStep = moveSpeed * BAT_SWOOP_DIVE_STRENGTH * dive * delta;
+								bat.position.x += hitPos.x * diveStep;
+								bat.position.z += hitPos.z * diveStep;
+
+							}
+
+						}
+
+						clampBatXZ( bat.position );
+
+						const baseFlyY = bat.userData.baseFlyY ?? getBatFlyY();
+						const bob = Math.sin( time * 0.004 + bat.userData.flyPhase ) * BAT_FLY_BOB_AMPLITUDE;
+						const swoopDip = Math.sin( orbitAngle * 1.5 + bat.userData.flyPhase ) * BAT_SWOOP_VERTICAL * ( 0.45 + dive * 0.55 );
+						bat.position.y = baseFlyY + bob - swoopDip;
+
+						lookTarget.copy( player );
+						bat.lookAt( lookTarget );
+
+					}
+
 					function createZombieGroup() {
 
 						ensureZombieAssets();
@@ -9064,6 +9212,7 @@
 
 							enemy.position.y = getBatFlyY();
 							enemy.userData.baseFlyY = enemy.position.y;
+							initBatSwoop( enemy );
 
 						}
 
@@ -9812,20 +9961,7 @@
 
 								}
 
-								if ( horizontalDist > 1e-4 ) {
-
-									toPlayer.y = 0;
-									toPlayer.normalize();
-									enemy.position.addScaledVector( toPlayer, zombieSpeed * BAT_SPEED_MULT * delta );
-
-									lookTarget.copy( player );
-									enemy.lookAt( lookTarget );
-
-								}
-
-								const baseFlyY = enemy.userData.baseFlyY ?? getBatFlyY();
-								enemy.position.y = baseFlyY + Math.sin( time * 0.004 + enemy.userData.flyPhase ) * BAT_FLY_BOB_AMPLITUDE;
-
+								updateBatSwoop( enemy, player, delta, time );
 								continue;
 
 							}
