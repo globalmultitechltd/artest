@@ -8280,6 +8280,23 @@
 				const BAT_SWOOP_DIVE_STRENGTH = 1.6;
 				const BAT_SWOOP_VERTICAL = 0.48;
 				const BAT_SWOOP_RADIUS_WOBBLE = 0.32;
+				const RAT_HEIGHT_RATIO = 0.14;
+				const RAT_FLOOR_LIFT = 0.04;
+				const RAT_SPEED_MULT = 1.85;
+				const RAT_HIT_RADIUS = 0.16;
+				const RAT_HITS_TO_KILL = 1;
+				const RAT_BURY_DURATION = 1.15;
+				const RAT_BURIED_MIN_TIME = 2.2;
+				const RAT_BURIED_MAX_TIME = 4.2;
+				const RAT_EMERGE_DURATION = 0.85;
+				const RAT_BURY_CHANCE_PER_SEC = 0.14;
+				const RAT_RUN_WAYPOINT_DIST = 0.2;
+
+				function getRatCountForLevel( level ) {
+
+					return Math.max( 1, Math.floor( level / 3 ) );
+
+				}
 
 				function create( { scene, renderer, camera, roomBounds } ) {
 
@@ -8306,8 +8323,10 @@
 					const mistTextures = [];
 
 					const enemies = [];
+					const rats = [];
 					const bulletTrails = [];
 					const impactParticles = [];
+					const dirtBursts = [];
 					const playCenter = new THREE.Vector3();
 					const raycaster = new THREE.Raycaster();
 					const pointer = new THREE.Vector2();
@@ -8402,6 +8421,9 @@
 					let sharedZombieMaterial = null;
 					let sharedBatGeometry = null;
 					let sharedBatMaterial = null;
+					let sharedRatGeometry = null;
+					let sharedRatMaterial = null;
+					let sharedRatTexture = null;
 					let sharedEyeCoreGeometry = null;
 					let sharedEyeHaloGeometry = null;
 					let sharedEyeHaloTexture = null;
@@ -9103,6 +9125,127 @@
 
 					}
 
+					function createRatTexture() {
+
+						const width = 128;
+						const height = 64;
+						const canvas = document.createElement( 'canvas' );
+						canvas.width = width;
+						canvas.height = height;
+						const ctx = canvas.getContext( '2d' );
+
+						ctx.clearRect( 0, 0, width, height );
+
+						ctx.fillStyle = '#5c4838';
+						ctx.beginPath();
+						ctx.ellipse( 54, 36, 36, 17, 0, 0, Math.PI * 2 );
+						ctx.fill();
+
+						ctx.fillStyle = '#6e5846';
+						ctx.beginPath();
+						ctx.ellipse( 86, 33, 15, 13, 0, 0, Math.PI * 2 );
+						ctx.fill();
+
+						ctx.fillStyle = '#7a6350';
+						ctx.beginPath();
+						ctx.arc( 92, 19, 7, 0, Math.PI * 2 );
+						ctx.fill();
+
+						ctx.strokeStyle = '#3f3026';
+						ctx.lineWidth = 4;
+						ctx.lineCap = 'round';
+						ctx.beginPath();
+						ctx.moveTo( 20, 38 );
+						ctx.quadraticCurveTo( 4, 26, 10, 44 );
+						ctx.stroke();
+
+						ctx.fillStyle = '#16120f';
+						ctx.beginPath();
+						ctx.arc( 94, 31, 2.5, 0, Math.PI * 2 );
+						ctx.fill();
+
+						ctx.fillStyle = '#8a7560';
+						ctx.fillRect( 78, 42, 8, 3 );
+
+						const texture = new THREE.CanvasTexture( canvas );
+						texture.colorSpace = THREE.SRGBColorSpace;
+
+						return texture;
+
+					}
+
+					function ensureRatAssets() {
+
+						if ( sharedRatGeometry && sharedRatMaterial ) return;
+
+						if ( ! sharedRatTexture ) {
+
+							sharedRatTexture = createRatTexture();
+
+						}
+
+						const height = playerHeight * RAT_HEIGHT_RATIO;
+						const width = height * 2;
+
+						sharedRatGeometry = new THREE.PlaneGeometry( width, height );
+						sharedRatGeometry.translate( 0, height / 2, 0 );
+
+						sharedRatMaterial = new THREE.MeshBasicMaterial( {
+							map: sharedRatTexture,
+							transparent: true,
+							alphaTest: 0.1,
+							side: THREE.DoubleSide,
+							depthWrite: false
+						} );
+
+					}
+
+					function rebuildRatAssets() {
+
+						if ( sharedRatGeometry ) {
+
+							sharedRatGeometry.dispose();
+							sharedRatGeometry = null;
+
+						}
+
+						if ( sharedRatMaterial ) {
+
+							sharedRatMaterial.dispose();
+							sharedRatMaterial = null;
+
+						}
+
+						ensureRatAssets();
+
+					}
+
+					function getRatFloorY() {
+
+						return floorY + RAT_FLOOR_LIFT;
+
+					}
+
+					function createRatGroup() {
+
+						ensureRatAssets();
+
+						const group = new THREE.Group();
+						const mesh = new THREE.Mesh( sharedRatGeometry, sharedRatMaterial );
+						group.add( mesh );
+						group.userData.enemyType = 'rat';
+						group.userData.mesh = mesh;
+						group.userData.hitsRemaining = RAT_HITS_TO_KILL;
+						group.userData.ratState = 'run';
+						group.userData.stateTimer = 0;
+						group.userData.buryProgress = 0;
+						group.userData.runTarget = new THREE.Vector3();
+						group.userData.runTime = 0;
+
+						return group;
+
+					}
+
 					function randomGroanDelay() {
 
 						return GROAN_MIN_INTERVAL + Math.random() * ( GROAN_MAX_INTERVAL - GROAN_MIN_INTERVAL );
@@ -9125,6 +9268,367 @@
 						}
 
 						enemies.length = 0;
+
+					}
+
+					function disposeRat( rat ) {
+
+						scene.remove( rat );
+
+					}
+
+					function clearRats() {
+
+						for ( const rat of rats ) {
+
+							disposeRat( rat );
+
+						}
+
+						rats.length = 0;
+
+					}
+
+					function randomPlayAreaFloorPoint( target ) {
+
+						if ( roomBounds ) {
+
+							roomBounds.getRandomFloorPoint( target );
+
+						} else {
+
+							const angle = Math.random() * Math.PI * 2;
+							const radius = 0.5 + Math.random() * ( PLAY_AREA_RADIUS - 0.5 );
+
+							target.set(
+								playCenter.x + Math.cos( angle ) * radius,
+								floorY,
+								playCenter.z + Math.sin( angle ) * radius
+							);
+
+						}
+
+						target.y = floorY;
+
+						return target;
+
+					}
+
+					function pickRatRunTarget( rat ) {
+
+						for ( let attempt = 0; attempt < 24; attempt ++ ) {
+
+							randomPlayAreaFloorPoint( rat.userData.runTarget );
+
+							if ( isInsidePlayArea( rat.userData.runTarget ) ) return;
+
+						}
+
+						rat.userData.runTarget.copy( playCenter );
+						rat.userData.runTarget.y = floorY;
+
+					}
+
+					function spawnDirtChunks( position, chunkCount ) {
+
+						const count = chunkCount;
+						const positions = new Float32Array( count * 3 );
+						const colors = new Float32Array( count * 3 );
+						const velocities = [];
+						const dirtColors = [
+							new THREE.Color( 0x6b4f2a ),
+							new THREE.Color( 0x8b6914 ),
+							new THREE.Color( 0x4a3820 ),
+							new THREE.Color( 0x9a7b4f )
+						];
+
+						for ( let i = 0; i < count; i ++ ) {
+
+							positions[ i * 3 ] = position.x + ( Math.random() - 0.5 ) * 0.18;
+							positions[ i * 3 + 1 ] = position.y;
+							positions[ i * 3 + 2 ] = position.z + ( Math.random() - 0.5 ) * 0.18;
+
+							const color = dirtColors[ i % dirtColors.length ];
+							colors[ i * 3 ] = color.r;
+							colors[ i * 3 + 1 ] = color.g;
+							colors[ i * 3 + 2 ] = color.b;
+
+							const speed = 0.7 + Math.random() * 1.4;
+							const velocity = new THREE.Vector3(
+								( Math.random() - 0.5 ) * 1.6,
+								0.55 + Math.random() * 1.35,
+								( Math.random() - 0.5 ) * 1.6
+							).normalize().multiplyScalar( speed );
+							velocities.push( velocity );
+
+						}
+
+						const geometry = new THREE.BufferGeometry();
+						geometry.setAttribute( 'position', new THREE.BufferAttribute( positions, 3 ) );
+						geometry.setAttribute( 'color', new THREE.BufferAttribute( colors, 3 ) );
+
+						const material = new THREE.PointsMaterial( {
+							size: 0.042,
+							vertexColors: true,
+							transparent: true,
+							opacity: 1,
+							depthTest: false,
+							sizeAttenuation: true
+						} );
+
+						const points = new THREE.Points( geometry, material );
+						points.renderOrder = 999;
+						scene.add( points );
+
+						dirtBursts.push( {
+							points,
+							velocities,
+							remaining: 0.45,
+							maxLife: 0.45
+						} );
+
+					}
+
+					function removeDirtBurst( burst ) {
+
+						scene.remove( burst.points );
+						burst.points.geometry.dispose();
+						burst.points.material.dispose();
+
+					}
+
+					function clearDirtBursts() {
+
+						for ( const burst of dirtBursts ) removeDirtBurst( burst );
+						dirtBursts.length = 0;
+
+					}
+
+					function updateDirtBursts( delta ) {
+
+						for ( let i = dirtBursts.length - 1; i >= 0; i -- ) {
+
+							const burst = dirtBursts[ i ];
+							burst.remaining -= delta;
+
+							const positionAttr = burst.points.geometry.attributes.position;
+							const positions = positionAttr.array;
+
+							for ( let j = 0; j < burst.velocities.length; j ++ ) {
+
+								const velocity = burst.velocities[ j ];
+								positions[ j * 3 ] += velocity.x * delta;
+								positions[ j * 3 + 1 ] += velocity.y * delta;
+								positions[ j * 3 + 2 ] += velocity.z * delta;
+								velocity.y -= 3.6 * delta;
+
+							}
+
+							positionAttr.needsUpdate = true;
+							burst.points.material.opacity = Math.max( 0, burst.remaining / burst.maxLife );
+
+							if ( burst.remaining <= 0 ) {
+
+								removeDirtBurst( burst );
+								dirtBursts.splice( i, 1 );
+
+							}
+
+						}
+
+					}
+
+					function spawnRat() {
+
+						const rat = createRatGroup();
+						randomPlayAreaFloorPoint( spawnPos );
+						rat.position.copy( spawnPos );
+						rat.position.y = getRatFloorY();
+						pickRatRunTarget( rat );
+						scene.add( rat );
+						rats.push( rat );
+
+					}
+
+					function spawnRatsForLevel( level ) {
+
+						const count = getRatCountForLevel( level );
+
+						for ( let i = 0; i < count; i ++ ) {
+
+							spawnRat();
+
+						}
+
+					}
+
+					function startRatBury( rat ) {
+
+						rat.userData.ratState = 'burying';
+						rat.userData.stateTimer = 0;
+						rat.userData.buryProgress = 0;
+
+					}
+
+					function startRatEmerge( rat ) {
+
+						rat.userData.ratState = 'emerging';
+						rat.userData.stateTimer = 0;
+						rat.userData.buryProgress = 1;
+						rat.userData.mesh.visible = true;
+
+					}
+
+					function updateRat( rat, delta ) {
+
+						const mesh = rat.userData.mesh;
+						const floor = getRatFloorY();
+						const moveSpeed = zombieSpeed * RAT_SPEED_MULT;
+						const dirtPos = hitPos;
+						dirtPos.set( rat.position.x, floorY, rat.position.z );
+
+						switch ( rat.userData.ratState ) {
+
+							case 'run': {
+
+								rat.userData.runTime += delta;
+								toPlayer.set(
+									rat.userData.runTarget.x - rat.position.x,
+									0,
+									rat.userData.runTarget.z - rat.position.z
+								);
+								const dist = toPlayer.length();
+
+								if ( dist < RAT_RUN_WAYPOINT_DIST || rat.userData.runTime > 5.5 ) {
+
+									pickRatRunTarget( rat );
+									rat.userData.runTime = 0;
+
+								}
+
+								if ( dist > 1e-4 ) {
+
+									toPlayer.normalize();
+									const step = Math.min( dist, moveSpeed * delta );
+									rat.position.x += toPlayer.x * step;
+									rat.position.z += toPlayer.z * step;
+
+									lookTarget.copy( rat.position ).add( toPlayer );
+									lookTarget.y = rat.position.y;
+									rat.lookAt( lookTarget );
+
+								}
+
+								rat.position.y = floor;
+								mesh.scale.set( 1, 1, 1 );
+								mesh.material.opacity = 1;
+
+								if ( rat.userData.runTime > 2 && Math.random() < RAT_BURY_CHANCE_PER_SEC * delta ) {
+
+									startRatBury( rat );
+
+								}
+
+								break;
+
+							}
+
+							case 'burying': {
+
+								rat.userData.stateTimer += delta;
+								rat.userData.buryProgress = Math.min( 1, rat.userData.stateTimer / RAT_BURY_DURATION );
+								const sink = rat.userData.buryProgress;
+
+								rat.position.y = floor - sink * ( RAT_FLOOR_LIFT + playerHeight * RAT_HEIGHT_RATIO * 0.85 );
+								mesh.scale.set( 1, Math.max( 0.15, 1 - sink * 0.85 ), 1 );
+								mesh.material.opacity = 1 - sink * 0.35;
+
+								spawnDirtChunks( dirtPos, 4 + Math.floor( Math.random() * 5 ) );
+
+								if ( rat.userData.buryProgress >= 1 ) {
+
+									rat.userData.ratState = 'buried';
+									rat.userData.stateTimer = RAT_BURIED_MIN_TIME + Math.random() * ( RAT_BURIED_MAX_TIME - RAT_BURIED_MIN_TIME );
+									mesh.visible = false;
+
+								}
+
+								break;
+
+							}
+
+							case 'buried': {
+
+								rat.userData.stateTimer -= delta;
+								rat.position.y = floorY - 0.06;
+								mesh.visible = false;
+
+								if ( Math.random() < delta * 2.2 ) {
+
+									spawnDirtChunks( dirtPos, 2 + Math.floor( Math.random() * 3 ) );
+
+								}
+
+								if ( rat.userData.stateTimer <= 0 ) {
+
+									startRatEmerge( rat );
+
+								}
+
+								break;
+
+							}
+
+							case 'emerging': {
+
+								rat.userData.stateTimer += delta;
+								rat.userData.buryProgress = 1 - Math.min( 1, rat.userData.stateTimer / RAT_EMERGE_DURATION );
+								const emerge = 1 - rat.userData.buryProgress;
+
+								rat.position.y = floor - rat.userData.buryProgress * ( RAT_FLOOR_LIFT + playerHeight * RAT_HEIGHT_RATIO * 0.85 );
+								mesh.visible = true;
+								mesh.scale.set( 1, Math.max( 0.15, emerge ), 1 );
+								mesh.material.opacity = 0.55 + emerge * 0.45;
+
+								spawnDirtChunks( dirtPos, 3 + Math.floor( Math.random() * 4 ) );
+
+								if ( rat.userData.buryProgress <= 0 ) {
+
+									rat.userData.ratState = 'run';
+									rat.userData.runTime = 0;
+									rat.position.y = floor;
+									mesh.scale.set( 1, 1, 1 );
+									mesh.material.opacity = 1;
+									pickRatRunTarget( rat );
+
+								}
+
+								break;
+
+							}
+
+						}
+
+						clampBatXZ( rat.position );
+
+					}
+
+					function updateRats( delta ) {
+
+						for ( let i = rats.length - 1; i >= 0; i -- ) {
+
+							updateRat( rats[ i ], delta );
+
+						}
+
+					}
+
+					function removeRatAt( index ) {
+
+						const rat = rats[ index ];
+						spawnDirtChunks( hitPos.set( rat.position.x, floorY, rat.position.z ), 14 );
+						disposeRat( rat );
+						rats.splice( index, 1 );
 
 					}
 
@@ -9334,6 +9838,7 @@
 						playerHeight = Math.max( 1.2, Math.min( 2.2, ( player.y - floorY ) * 1.08 ) );
 						rebuildZombieAssets();
 						rebuildBatAssets();
+						rebuildRatAssets();
 
 						for ( const enemy of enemies ) {
 
@@ -9396,6 +9901,7 @@
 							getZombieCountForLevel( level ),
 							getBatCountForLevel( level )
 						);
+						spawnRatsForLevel( level );
 
 					}
 
@@ -9416,6 +9922,8 @@
 						lives = STARTING_LIVES;
 						hitCooldown = 0;
 						clearEnemies();
+						clearRats();
+						clearDirtBursts();
 						phase = 'playing';
 
 						ensureBatGifLoaded().then( () => {
@@ -9432,6 +9940,8 @@
 
 						phase = 'game_over';
 						clearEnemies();
+						clearRats();
+						clearDirtBursts();
 						updateHud();
 
 					}
@@ -9569,6 +10079,22 @@
 
 					}
 
+					function getHittableMeshes() {
+
+						const meshes = getEnemyMeshes();
+
+						for ( const rat of rats ) {
+
+							if ( rat.userData.ratState === 'buried' ) continue;
+
+							if ( rat.userData.mesh ) meshes.push( rat.userData.mesh );
+
+						}
+
+						return meshes;
+
+					}
+
 					function getBulletTrailLength( origin, direction ) {
 
 						let minDist = maxBulletLength;
@@ -9582,13 +10108,13 @@
 
 						}
 
-						const enemyMeshes = getEnemyMeshes();
+						const hittableMeshes = getHittableMeshes();
 
-						if ( enemyMeshes.length > 0 ) {
+						if ( hittableMeshes.length > 0 ) {
 
-							const enemyHits = raycaster.intersectObjects( enemyMeshes, false );
+							const targetHits = raycaster.intersectObjects( hittableMeshes, false );
 
-							if ( enemyHits.length > 0 ) minDist = Math.min( minDist, enemyHits[ 0 ].distance );
+							if ( targetHits.length > 0 ) minDist = Math.min( minDist, targetHits[ 0 ].distance );
 
 						}
 
@@ -9600,8 +10126,8 @@
 
 						raycaster.set( origin, direction );
 
-						const enemyMeshes = getEnemyMeshes();
-						const hits = raycaster.intersectObjects( enemyMeshes, false );
+						const hittableMeshes = getHittableMeshes();
+						const hits = raycaster.intersectObjects( hittableMeshes, false );
 
 						if ( hits.length > 0 && hits[ 0 ].distance <= maxDistance + 0.001 ) {
 
@@ -9614,7 +10140,23 @@
 									return {
 										zombie: enemies[ i ],
 										point: hits[ 0 ].point.clone(),
-										distance: hits[ 0 ].distance
+										distance: hits[ 0 ].distance,
+										isRat: false
+									};
+
+								}
+
+							}
+
+							for ( let i = 0; i < rats.length; i ++ ) {
+
+								if ( rats[ i ].userData.mesh === hitMesh ) {
+
+									return {
+										zombie: rats[ i ],
+										point: hits[ 0 ].point.clone(),
+										distance: hits[ 0 ].distance,
+										isRat: true
 									};
 
 								}
@@ -9657,9 +10199,54 @@
 
 						}
 
+						for ( let i = 0; i < rats.length; i ++ ) {
+
+							const rat = rats[ i ];
+
+							if ( rat.userData.ratState === 'buried' ) continue;
+
+							const mesh = rat.userData.mesh;
+							mesh.getWorldPosition( spawnPos );
+							const distanceToRay = raycaster.ray.distanceToPoint( spawnPos );
+
+							if ( distanceToRay >= RAT_HIT_RADIUS && distanceToRay >= closestDistance ) continue;
+
+							toPlayer.copy( spawnPos ).sub( viewCamera.position );
+
+							if ( toPlayer.dot( raycaster.ray.direction ) <= 0 ) continue;
+
+							toPlayer.copy( spawnPos ).sub( origin );
+							const impactDistance = toPlayer.dot( direction );
+
+							if ( impactDistance <= 0 || impactDistance > maxDistance ) continue;
+
+							if ( distanceToRay < RAT_HIT_RADIUS || distanceToRay < closestDistance ) {
+
+								closestDistance = Math.min( distanceToRay, RAT_HIT_RADIUS );
+								closestEnemy = rat;
+								closestImpactDistance = impactDistance;
+
+							}
+
+						}
+
 						if ( closestEnemy === null ) return null;
 
 						hitPos.copy( origin ).addScaledVector( direction, closestImpactDistance );
+
+						if ( closestEnemy.userData.enemyType === 'rat' ) {
+
+							hitPos.y = closestEnemy.position.y + playerHeight * RAT_HEIGHT_RATIO * 0.45;
+
+							return {
+								zombie: closestEnemy,
+								point: hitPos.clone(),
+								distance: closestImpactDistance,
+								isRat: true
+							};
+
+						}
+
 						const hitHeight = closestEnemy.userData.enemyType === 'bat'
 							? playerHeight * BAT_HEIGHT_RATIO * 0.5
 							: playerHeight * 0.5;
@@ -9668,7 +10255,8 @@
 						return {
 							zombie: closestEnemy,
 							point: hitPos.clone(),
-							distance: closestImpactDistance
+							distance: closestImpactDistance,
+							isRat: false
 						};
 
 					}
@@ -9861,12 +10449,28 @@
 							if ( trail.pendingHit && ! trail.hitProcessed && trail.distance >= trail.pendingHit.distance ) {
 
 								trail.hitProcessed = true;
-								const hitIndex = enemies.indexOf( trail.pendingHit.zombie );
 
-								if ( hitIndex >= 0 ) {
+								if ( trail.pendingHit.isRat ) {
 
-									spawnImpactParticles( trail.pendingHit.point );
-									damageEnemyAt( hitIndex );
+									const ratIndex = rats.indexOf( trail.pendingHit.zombie );
+
+									if ( ratIndex >= 0 ) {
+
+										spawnImpactParticles( trail.pendingHit.point );
+										removeRatAt( ratIndex );
+
+									}
+
+								} else {
+
+									const hitIndex = enemies.indexOf( trail.pendingHit.zombie );
+
+									if ( hitIndex >= 0 ) {
+
+										spawnImpactParticles( trail.pendingHit.point );
+										damageEnemyAt( hitIndex );
+
+									}
 
 								}
 
@@ -10126,6 +10730,8 @@
 							pendingXRSelect = null;
 							pendingRestartTap = null;
 							clearEnemies();
+							clearRats();
+							clearDirtBursts();
 							ensureBatGifLoaded();
 
 							for ( const trail of [ ...bulletTrails ] ) removeBulletTrail( trail );
@@ -10182,6 +10788,8 @@
 							shooterCrosshair.classList.remove( 'visible' );
 							if ( zombiesStatsHud ) zombiesStatsHud.classList.remove( 'visible' );
 							clearEnemies();
+							clearRats();
+							clearDirtBursts();
 
 							for ( const trail of [ ...bulletTrails ] ) removeBulletTrail( trail );
 							bulletTrails.length = 0;
@@ -10220,6 +10828,27 @@
 
 								sharedBatMaterial.dispose();
 								sharedBatMaterial = null;
+
+							}
+
+							if ( sharedRatGeometry ) {
+
+								sharedRatGeometry.dispose();
+								sharedRatGeometry = null;
+
+							}
+
+							if ( sharedRatMaterial ) {
+
+								sharedRatMaterial.dispose();
+								sharedRatMaterial = null;
+
+							}
+
+							if ( sharedRatTexture ) {
+
+								sharedRatTexture.dispose();
+								sharedRatTexture = null;
 
 							}
 
@@ -10290,6 +10919,8 @@
 
 								updateBulletTrails( delta );
 								updateImpactParticles( delta );
+								updateDirtBursts( delta );
+								updateRats( delta );
 								updateFloorMist( delta, timestamp );
 
 							}
