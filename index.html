@@ -518,6 +518,79 @@
 				font-size: 12px;
 			}
 
+			#photogrammetry-hud {
+				display: none;
+				position: absolute;
+				left: 0;
+				right: 0;
+				top: 108px;
+				text-align: center;
+				color: #e2e8f0;
+				font-family: system-ui, sans-serif;
+				font-size: 15px;
+				font-weight: 600;
+				text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+				pointer-events: none;
+				padding: 0 12px;
+				white-space: pre-line;
+			}
+
+			#photogrammetry-hud.visible {
+				display: block;
+			}
+
+			#photogrammetry-controls {
+				display: none;
+				position: absolute;
+				left: 50%;
+				bottom: 86px;
+				transform: translateX(-50%);
+				z-index: 8;
+				flex-direction: column;
+				gap: 8px;
+				width: min(90vw, 360px);
+				pointer-events: auto;
+			}
+
+			#photogrammetry-controls.visible {
+				display: flex;
+			}
+
+			#photogrammetry-controls button {
+				width: 100%;
+				padding: 12px 14px;
+				font-family: system-ui, sans-serif;
+				font-size: 13px;
+				font-weight: 700;
+				letter-spacing: 0.03em;
+				text-transform: uppercase;
+				color: #fff;
+				background: rgba(30, 41, 59, 0.95);
+				border: 2px solid rgba(255, 255, 255, 0.4);
+				border-radius: 12px;
+				box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+				cursor: pointer;
+				touch-action: manipulation;
+			}
+
+			#photogrammetry-controls button:active {
+				background: rgba(51, 65, 85, 0.98);
+				transform: scale(0.98);
+			}
+
+			#photogrammetry-controls button.hidden {
+				display: none;
+			}
+
+			#photogrammetry-controls button:disabled {
+				opacity: 0.45;
+				cursor: not-allowed;
+			}
+
+			#photogrammetry-controls input[type="file"] {
+				display: none;
+			}
+
 			#shooter-hud {
 				display: none;
 				position: fixed;
@@ -1174,7 +1247,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 18:15</div>
+		<div id="version">version: 00:47</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1219,6 +1292,7 @@
 		<div id="ar-overlay">
 			<button id="ar-exit-btn" type="button" aria-label="Exit to home screen" title="Exit to home">×</button>
 			<div id="bounce-hud">Hits: 0</div>
+			<div id="photogrammetry-hud">Tap a room wall to begin capture</div>
 			<div id="bowling-hud">Point at the floor to place the bowling alley</div>
 			<div id="bowling-power-wrap" aria-hidden="true">
 				<div id="bowling-power-label">Roll power</div>
@@ -1249,6 +1323,13 @@
 					<input type="range" id="bounce-speed" min="1.2" max="5.5" step="0.1" value="2.8" />
 					<span id="bounce-speed-value">2.8</span>
 				</label>
+			</div>
+
+			<div id="photogrammetry-controls" aria-label="Photogrammetry controls">
+				<button id="photogrammetry-capture-btn" class="hidden" type="button">capture camera image to selected wall surface</button>
+				<button id="photogrammetry-save-btn" type="button" disabled>Save textures</button>
+				<button id="photogrammetry-load-btn" type="button">Load textures</button>
+				<input id="photogrammetry-file-input" type="file" accept=".json,application/json" />
 			</div>
 
 			<div id="zombies-controls" aria-label="Zombies controls">
@@ -2009,6 +2090,7 @@
 				registerMiniGame( createCollectItemsGame() );
 				registerMiniGame( createZombiesGame() );
 				registerMiniGame( createBowlingGame() );
+				registerMiniGame( createPhotogrammetryGame() );
 
 				setupWorldBuilderControls();
 				setupPaintControls();
@@ -2625,6 +2707,30 @@
 			function setupHomeScreen() {
 
 				const select = document.getElementById( 'mini-game-select' );
+				const roomScaleCheckbox = document.getElementById( 'room-scale-checkbox' );
+
+				function selectedMiniGameRequiresRoomScale() {
+
+					return selectedMiniGameId === 'photogrammetry';
+
+				}
+
+				function syncRoomScaleRequirementUI() {
+
+					if ( ! roomScaleCheckbox ) return;
+					const requiresRoomScale = selectedMiniGameRequiresRoomScale();
+					roomScaleCheckbox.disabled = requiresRoomScale;
+
+					if ( requiresRoomScale ) {
+
+						roomScaleEnabled = true;
+						roomScaleCheckbox.checked = true;
+
+					}
+
+					updateRoomScalePersistenceUI();
+
+				}
 
 				for ( const id of Object.keys( miniGames ) ) {
 
@@ -2637,18 +2743,28 @@
 
 				loadSelectedMiniGameFromStorage();
 				select.value = selectedMiniGameId;
+				syncRoomScaleRequirementUI();
 
 				select.addEventListener( 'change', () => {
 
 					selectedMiniGameId = select.value;
+					syncRoomScaleRequirementUI();
 					saveSelectedMiniGameToStorage();
 
 				} );
 
-				const roomScaleCheckbox = document.getElementById( 'room-scale-checkbox' );
 				if ( roomScaleCheckbox ) {
 
 					roomScaleCheckbox.addEventListener( 'change', () => {
+
+						if ( selectedMiniGameRequiresRoomScale() && ! roomScaleCheckbox.checked ) {
+
+							roomScaleCheckbox.checked = true;
+							roomScaleEnabled = true;
+							updateRoomScalePersistenceUI();
+							return;
+
+						}
 
 						roomScaleEnabled = roomScaleCheckbox.checked;
 						if ( ! roomScaleEnabled ) savedRoomBounds = null;
@@ -2864,6 +2980,8 @@
 				const zombiesControls = document.getElementById( 'zombies-controls' );
 				const bounceHud = document.getElementById( 'bounce-hud' );
 				const bounceControls = document.getElementById( 'bounce-controls' );
+				const photogrammetryHud = document.getElementById( 'photogrammetry-hud' );
+				const photogrammetryControls = document.getElementById( 'photogrammetry-controls' );
 				const rcCarHud = document.getElementById( 'rc-car-hud' );
 				const rcCarSceneryControls = document.getElementById( 'rc-car-scenery-controls' );
 				const rcCarDriveLeft = document.getElementById( 'rc-car-drive-left' );
@@ -2904,6 +3022,9 @@
 					zombiesControls.classList.toggle( 'visible', isZombies && ZOMBIES_SPEED_SLIDER_ENABLED );
 					bounceHud.classList.toggle( 'visible', selectedMiniGameId === 'bounce' );
 					bounceControls.classList.toggle( 'visible', selectedMiniGameId === 'bounce' );
+					const isPhotogrammetry = selectedMiniGameId === 'photogrammetry';
+					photogrammetryHud.classList.toggle( 'visible', isPhotogrammetry );
+					photogrammetryControls.classList.toggle( 'visible', isPhotogrammetry );
 					const isRcCar = selectedMiniGameId === 'rc-car';
 					rcCarHud.classList.toggle( 'visible', isRcCar );
 					rcCarSceneryControls.classList.toggle( 'visible', isRcCar );
@@ -3002,6 +3123,13 @@
 						roomBounds: null
 					};
 
+					if ( selectedMiniGameId === 'photogrammetry' ) {
+
+						roomScaleEnabled = true;
+						if ( roomScaleCheckbox ) roomScaleCheckbox.checked = true;
+
+					}
+
 					if ( isStandaloneRoomScale ) {
 
 						beginRoomScaleSetup( gameContext, { standalone: true } );
@@ -3065,6 +3193,8 @@
 					zombiesControls.classList.remove( 'visible' );
 					bounceHud.classList.remove( 'visible' );
 					bounceControls.classList.remove( 'visible' );
+					photogrammetryHud.classList.remove( 'visible' );
+					photogrammetryControls.classList.remove( 'visible' );
 					rcCarHud.classList.remove( 'visible' );
 					rcCarSceneryControls.classList.remove( 'visible' );
 					rcCarDriveLeft.classList.remove( 'visible' );
@@ -3083,6 +3213,13 @@
 					homeScreen.classList.remove( 'hidden' );
 					miniGameSelect.disabled = false;
 					if ( roomScaleCheckbox ) roomScaleCheckbox.disabled = false;
+					if ( selectedMiniGameId === 'photogrammetry' && roomScaleCheckbox ) {
+
+						roomScaleEnabled = true;
+						roomScaleCheckbox.checked = true;
+						roomScaleCheckbox.disabled = true;
+
+					}
 					if ( wallFloorTexturesCheckbox ) wallFloorTexturesCheckbox.disabled = false;
 					if ( simHelp ) simHelp.classList.remove( 'visible' );
 					if ( arExitBtn ) arExitBtn.classList.remove( 'visible' );
@@ -7133,6 +7270,598 @@
 
 							updatePlayerPaddle();
 							stepPhysics( delta );
+
+						}
+
+					};
+
+				}
+
+				return { id, label, create };
+
+			}
+
+			function createPhotogrammetryGame() {
+
+				const id = 'photogrammetry';
+				const label = 'Photogrammetry';
+				const projectedPoint = new THREE.Vector3();
+				const wallToCamera = new THREE.Vector3();
+				const tmpQuat = new THREE.Quaternion();
+				const raycaster = new THREE.Raycaster();
+				const pointer = new THREE.Vector2();
+				const xrPickOrigin = new THREE.Vector3();
+				const xrPickDir = new THREE.Vector3();
+
+				function configureCapturedTexture( texture ) {
+
+					texture.colorSpace = THREE.SRGBColorSpace;
+					texture.wrapS = THREE.ClampToEdgeWrapping;
+					texture.wrapT = THREE.ClampToEdgeWrapping;
+					texture.minFilter = THREE.LinearFilter;
+					texture.magFilter = THREE.LinearFilter;
+					texture.generateMipmaps = false;
+					texture.needsUpdate = true;
+
+				}
+
+				function create( { renderer, camera, roomBounds } ) {
+
+					let selectedWall = null;
+					let pendingPointerPick = null;
+					let pendingXRPick = null;
+					let xrSession = null;
+					const wallCaptureStore = new Map();
+					const cornerWorld = [ new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3() ];
+					const cornerPixels = [ new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2() ];
+					const allWalls = roomBounds && roomBounds.walls ? roomBounds.walls : [];
+
+					const hud = document.getElementById( 'photogrammetry-hud' );
+					const controls = document.getElementById( 'photogrammetry-controls' );
+					const captureBtn = document.getElementById( 'photogrammetry-capture-btn' );
+					const saveBtn = document.getElementById( 'photogrammetry-save-btn' );
+					const loadBtn = document.getElementById( 'photogrammetry-load-btn' );
+					const fileInput = document.getElementById( 'photogrammetry-file-input' );
+
+					function getViewCamera() {
+
+						if ( renderer.xr.isPresenting ) {
+
+							const xrCamera = renderer.xr.getCamera();
+							if ( xrCamera.cameras && xrCamera.cameras.length > 0 ) {
+
+								const eye = xrCamera.cameras[ 0 ];
+								eye.updateMatrixWorld( true );
+								return eye;
+
+							}
+
+							xrCamera.updateMatrixWorld( true );
+							return xrCamera;
+
+						}
+
+						camera.updateMatrixWorld( true );
+						return camera;
+
+					}
+
+					function getWallCorners( wall, outCorners ) {
+
+						outCorners[ 0 ].copy( wall.start ).setY( wall.floorY );
+						outCorners[ 1 ].copy( wall.end ).setY( wall.floorY );
+						outCorners[ 2 ].copy( wall.end ).setY( wall.floorY + wall.wallHeight );
+						outCorners[ 3 ].copy( wall.start ).setY( wall.floorY + wall.wallHeight );
+						return outCorners;
+
+					}
+
+					function wallFullyVisible( wall ) {
+
+						const viewCamera = getViewCamera();
+						const margin = 0.95;
+						const corners = getWallCorners( wall, cornerWorld );
+
+						viewCamera.getWorldPosition( wallToCamera );
+						wallToCamera.sub( wall.midpoint );
+						if ( wallToCamera.dot( wall.normal ) < 0.01 ) return false;
+
+						for ( const corner of corners ) {
+
+							projectedPoint.copy( corner ).project( viewCamera );
+							if ( projectedPoint.z < - 1 || projectedPoint.z > 1 ) return false;
+							if ( projectedPoint.x < - margin || projectedPoint.x > margin ) return false;
+							if ( projectedPoint.y < - margin || projectedPoint.y > margin ) return false;
+
+						}
+
+						return true;
+
+					}
+
+					function clearWallHighlights() {
+
+						for ( const wall of allWalls ) {
+
+							if ( ! wall.mesh || ! wall.mesh.material || ! wall.mesh.material.emissive ) continue;
+							wall.mesh.material.emissive.setHex( 0x000000 );
+
+						}
+
+					}
+
+					function updateSelectionHighlight() {
+
+						clearWallHighlights();
+						if ( ! selectedWall ) return;
+						if ( ! selectedWall.mesh || ! selectedWall.mesh.material || ! selectedWall.mesh.material.emissive ) return;
+						selectedWall.mesh.material.emissive.setHex( 0x16a34a );
+
+					}
+
+					function buildWallCaptureStatusLine() {
+
+						if ( allWalls.length === 0 ) return '';
+
+						const parts = [];
+
+						for ( const wall of allWalls ) {
+
+							const captured = wallCaptureStore.has( wall.index );
+							parts.push( ( wall.index + 1 ) + ( captured ? '✓' : '○' ) );
+
+						}
+
+						return 'Walls: ' + parts.join( '  ' );
+
+					}
+
+					function updateHudAndButtons( overrideMessage = '' ) {
+
+						const capturedCount = wallCaptureStore.size;
+						const totalWalls = allWalls.length;
+						const isSimulated = activeSessionMode === 'sim';
+						let message = overrideMessage;
+
+						if ( ! message ) {
+
+							if ( ! roomBounds || totalWalls === 0 ) {
+
+								message = 'Photogrammetry requires room scale boundaries.';
+								selectedWall = null;
+
+							} else if ( isSimulated ) {
+
+								message = 'Capture needs live camera AR. Simulated AR is not supported.';
+								selectedWall = null;
+
+							} else if ( selectedWall ) {
+
+								message = 'Wall ' + ( selectedWall.index + 1 ) + ' selected. Captured ' + capturedCount + ' / ' + totalWalls;
+
+							} else {
+
+								message = 'Tap a wall that is fully visible in view. Captured ' + capturedCount + ' / ' + totalWalls;
+
+							}
+
+							if ( capturedCount === totalWalls && totalWalls > 0 ) message = 'All walls captured. Save textures when ready.';
+
+						}
+
+						const wallStatusLine = buildWallCaptureStatusLine();
+						if ( hud ) hud.textContent = wallStatusLine ? message + '\n' + wallStatusLine : message;
+						if ( captureBtn ) captureBtn.classList.toggle( 'hidden', ! selectedWall || isSimulated );
+						if ( saveBtn ) saveBtn.disabled = capturedCount === 0;
+						updateSelectionHighlight();
+
+					}
+
+					function setSelectedWall( wall ) {
+
+						if ( ! wall || ! wall.mesh ) return;
+						if ( ! wallFullyVisible( wall ) ) {
+
+							selectedWall = null;
+							updateHudAndButtons( 'Keep the entire wall on screen, then tap again.' );
+							return;
+
+						}
+
+						selectedWall = wall;
+						updateHudAndButtons();
+
+					}
+
+					function pickWallFromRay() {
+
+						if ( ! roomBounds || ! allWalls.length ) return;
+						const meshes = allWalls.map( ( wall ) => wall.mesh ).filter( Boolean );
+						if ( meshes.length === 0 ) return;
+
+						const hits = raycaster.intersectObjects( meshes, false );
+						if ( hits.length === 0 ) {
+
+							selectedWall = null;
+							updateHudAndButtons();
+							return;
+
+						}
+
+						const wallIndex = hits[ 0 ].object.userData.wallIndex;
+						const wall = allWalls.find( ( candidate ) => candidate.index === wallIndex );
+						if ( wall ) setSelectedWall( wall );
+
+					}
+
+					function onPointerDown( event ) {
+
+						if ( ! roomBounds || activeSessionMode === 'sim' ) return;
+						event.preventDefault();
+						const point = event.changedTouches ? event.changedTouches[ 0 ] : event;
+						pendingPointerPick = { x: point.clientX, y: point.clientY };
+
+					}
+
+					function onXRSelect( event ) {
+
+						if ( ! roomBounds || activeSessionMode === 'sim' ) return;
+						pendingXRPick = event;
+
+					}
+
+					function projectWallCornersToPixels( wall, width, height ) {
+
+						const viewCamera = getViewCamera();
+						const corners = getWallCorners( wall, cornerWorld );
+
+						for ( let i = 0; i < corners.length; i ++ ) {
+
+							projectedPoint.copy( corners[ i ] ).project( viewCamera );
+							cornerPixels[ i ].set(
+								( projectedPoint.x * 0.5 + 0.5 ) * width,
+								( - projectedPoint.y * 0.5 + 0.5 ) * height
+							);
+
+						}
+
+						return cornerPixels;
+
+					}
+
+					function applyCapturedTextureToWall( wall, sourceCanvas, dataUrl ) {
+
+						const prior = wallCaptureStore.get( wall.index );
+						if ( prior && prior.texture ) prior.texture.dispose();
+
+						const texture = new THREE.CanvasTexture( sourceCanvas );
+						configureCapturedTexture( texture );
+
+						if ( wall.mesh && wall.mesh.material && ! Array.isArray( wall.mesh.material ) ) {
+
+							wall.mesh.material.map = texture;
+							wall.mesh.material.needsUpdate = true;
+
+						}
+
+						wallCaptureStore.set( wall.index, { texture, dataUrl } );
+
+					}
+
+					function captureSelectedWallImage() {
+
+						if ( ! selectedWall || activeSessionMode === 'sim' ) return;
+						if ( ! wallFullyVisible( selectedWall ) ) {
+
+							selectedWall = null;
+							updateHudAndButtons();
+							return;
+
+						}
+
+						const sourceCanvas = renderer.domElement;
+						if ( ! sourceCanvas.width || ! sourceCanvas.height ) {
+
+							updateHudAndButtons( 'Capture failed: renderer has no frame yet.' );
+							return;
+
+						}
+
+						const frameCanvas = document.createElement( 'canvas' );
+						frameCanvas.width = sourceCanvas.width;
+						frameCanvas.height = sourceCanvas.height;
+						const frameCtx = frameCanvas.getContext( '2d' );
+
+						if ( ! frameCtx ) {
+
+							updateHudAndButtons( 'Capture failed: canvas 2D context unavailable.' );
+							return;
+
+						}
+
+						try {
+
+							frameCtx.drawImage( sourceCanvas, 0, 0, frameCanvas.width, frameCanvas.height );
+
+						} catch {
+
+							updateHudAndButtons( 'Capture failed: camera frame access is blocked on this device/browser.' );
+							return;
+
+						}
+
+						const polygon = projectWallCornersToPixels( selectedWall, frameCanvas.width, frameCanvas.height );
+						let minX = Infinity;
+						let minY = Infinity;
+						let maxX = - Infinity;
+						let maxY = - Infinity;
+
+						for ( const point of polygon ) {
+
+							minX = Math.min( minX, point.x );
+							minY = Math.min( minY, point.y );
+							maxX = Math.max( maxX, point.x );
+							maxY = Math.max( maxY, point.y );
+
+						}
+
+						minX = THREE.MathUtils.clamp( Math.floor( minX ), 0, frameCanvas.width - 1 );
+						minY = THREE.MathUtils.clamp( Math.floor( minY ), 0, frameCanvas.height - 1 );
+						maxX = THREE.MathUtils.clamp( Math.ceil( maxX ), 1, frameCanvas.width );
+						maxY = THREE.MathUtils.clamp( Math.ceil( maxY ), 1, frameCanvas.height );
+
+						const cropWidth = Math.max( 1, maxX - minX );
+						const cropHeight = Math.max( 1, maxY - minY );
+						if ( cropWidth < 4 || cropHeight < 4 ) {
+
+							updateHudAndButtons( 'Capture too small. Move closer and try again.' );
+							return;
+
+						}
+
+						const croppedCanvas = document.createElement( 'canvas' );
+						croppedCanvas.width = cropWidth;
+						croppedCanvas.height = cropHeight;
+						const cropCtx = croppedCanvas.getContext( '2d' );
+						if ( ! cropCtx ) return;
+
+						cropCtx.save();
+						cropCtx.beginPath();
+						for ( let i = 0; i < polygon.length; i ++ ) {
+
+							const px = polygon[ i ].x - minX;
+							const py = polygon[ i ].y - minY;
+							if ( i === 0 ) cropCtx.moveTo( px, py );
+							else cropCtx.lineTo( px, py );
+
+						}
+						cropCtx.closePath();
+						cropCtx.clip();
+						cropCtx.drawImage( frameCanvas, - minX, - minY );
+						cropCtx.restore();
+
+						const dataUrl = croppedCanvas.toDataURL( 'image/png' );
+						applyCapturedTextureToWall( selectedWall, croppedCanvas, dataUrl );
+						updateHudAndButtons();
+
+					}
+
+					function saveCapturedTextures() {
+
+						if ( wallCaptureStore.size === 0 || ! roomBounds ) return;
+						const payload = {
+							version: 1,
+							game: id,
+							exportedAt: new Date().toISOString(),
+							wallCount: allWalls.length,
+							wallHeight: roomBounds.wallHeight,
+							walls: {}
+						};
+
+						for ( const [ wallIndex, entry ] of wallCaptureStore.entries() ) {
+
+							payload.walls[ String( wallIndex ) ] = entry.dataUrl;
+
+						}
+
+						const blob = new Blob( [ JSON.stringify( payload ) ], { type: 'application/json' } );
+						const stamp = new Date().toISOString().replace( /[:.]/g, '-' );
+						const anchor = document.createElement( 'a' );
+						const url = URL.createObjectURL( blob );
+						anchor.href = url;
+						anchor.download = 'photogrammetry-textures-' + stamp + '.json';
+						document.body.appendChild( anchor );
+						anchor.click();
+						document.body.removeChild( anchor );
+						URL.revokeObjectURL( url );
+
+					}
+
+					function loadDataUrlIntoCanvas( dataUrl ) {
+
+						return new Promise( ( resolve, reject ) => {
+
+							const image = new Image();
+							image.onload = () => {
+
+								const canvas = document.createElement( 'canvas' );
+								canvas.width = image.naturalWidth || image.width;
+								canvas.height = image.naturalHeight || image.height;
+								const context = canvas.getContext( '2d' );
+								if ( ! context ) {
+
+									reject( new Error( 'No 2D context' ) );
+									return;
+
+								}
+
+								context.drawImage( image, 0, 0 );
+								resolve( canvas );
+
+							};
+							image.onerror = () => reject( new Error( 'Failed to decode image' ) );
+							image.src = dataUrl;
+
+						} );
+
+					}
+
+					async function onFileInputChange() {
+
+						const file = fileInput && fileInput.files ? fileInput.files[ 0 ] : null;
+						if ( ! file ) return;
+
+						try {
+
+							const text = await file.text();
+							const data = JSON.parse( text );
+							if ( ! data || data.game !== id || typeof data.walls !== 'object' || ! data.walls ) {
+
+								throw new Error( 'Invalid photogrammetry file format.' );
+
+							}
+
+							if ( typeof data.wallCount === 'number' && data.wallCount !== allWalls.length ) {
+
+								throw new Error( 'Wall count does not match this room.' );
+
+							}
+
+							for ( const wall of allWalls ) {
+
+								const wallData = data.walls[ String( wall.index ) ];
+								if ( typeof wallData !== 'string' || ! wallData.startsWith( 'data:image/' ) ) continue;
+								const canvas = await loadDataUrlIntoCanvas( wallData );
+								applyCapturedTextureToWall( wall, canvas, wallData );
+
+							}
+
+							updateHudAndButtons();
+
+						} catch ( error ) {
+
+							const message = error && error.message ? error.message : 'Invalid file.';
+							updateHudAndButtons( 'Load failed: ' + message );
+
+						} finally {
+
+							if ( fileInput ) fileInput.value = '';
+
+						}
+
+					}
+
+					function onLoadClick() {
+
+						if ( ! fileInput ) return;
+						fileInput.click();
+
+					}
+
+					function preventOverlaySelect( event ) {
+
+						event.preventDefault();
+
+					}
+
+					return {
+
+						onSessionStart() {
+
+							selectedWall = null;
+							pendingPointerPick = null;
+							pendingXRPick = null;
+							renderer.domElement.style.touchAction = 'none';
+							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
+							xrSession = renderer.xr.getSession();
+							if ( xrSession ) xrSession.addEventListener( 'select', onXRSelect );
+							if ( controls ) controls.addEventListener( 'beforexrselect', preventOverlaySelect );
+							if ( captureBtn ) captureBtn.addEventListener( 'click', captureSelectedWallImage );
+							if ( saveBtn ) saveBtn.addEventListener( 'click', saveCapturedTextures );
+							if ( loadBtn ) loadBtn.addEventListener( 'click', onLoadClick );
+							if ( fileInput ) fileInput.addEventListener( 'change', onFileInputChange );
+							updateHudAndButtons();
+
+						},
+
+						onSessionEnd() {
+
+							renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
+							renderer.domElement.style.touchAction = '';
+
+							if ( xrSession ) {
+
+								xrSession.removeEventListener( 'select', onXRSelect );
+								xrSession = null;
+
+							}
+
+							if ( controls ) controls.removeEventListener( 'beforexrselect', preventOverlaySelect );
+							if ( captureBtn ) captureBtn.removeEventListener( 'click', captureSelectedWallImage );
+							if ( saveBtn ) saveBtn.removeEventListener( 'click', saveCapturedTextures );
+							if ( loadBtn ) loadBtn.removeEventListener( 'click', onLoadClick );
+							if ( fileInput ) fileInput.removeEventListener( 'change', onFileInputChange );
+
+							for ( const entry of wallCaptureStore.values() ) {
+
+								if ( entry.texture ) entry.texture.dispose();
+
+							}
+
+							wallCaptureStore.clear();
+							selectedWall = null;
+							clearWallHighlights();
+
+						},
+
+						onFrame( _timestamp, frame ) {
+
+							if ( ! frame || ! roomBounds ) return;
+
+							if ( pendingPointerPick ) {
+
+								const rect = renderer.domElement.getBoundingClientRect();
+								pointer.x = ( ( pendingPointerPick.x - rect.left ) / rect.width ) * 2 - 1;
+								pointer.y = - ( ( pendingPointerPick.y - rect.top ) / rect.height ) * 2 + 1;
+								pendingPointerPick = null;
+								raycaster.setFromCamera( pointer, getViewCamera() );
+								pickWallFromRay();
+
+							}
+
+							if ( pendingXRPick ) {
+
+								const referenceSpace = renderer.xr.getReferenceSpace();
+								const pose = frame.getPose( pendingXRPick.inputSource.targetRaySpace, referenceSpace );
+								pendingXRPick = null;
+
+								if ( pose ) {
+
+									xrPickOrigin.set(
+										pose.transform.position.x,
+										pose.transform.position.y,
+										pose.transform.position.z
+									);
+									tmpQuat.set(
+										pose.transform.orientation.x,
+										pose.transform.orientation.y,
+										pose.transform.orientation.z,
+										pose.transform.orientation.w
+									);
+									xrPickDir.set( 0, 0, - 1 ).applyQuaternion( tmpQuat ).normalize();
+									raycaster.set( xrPickOrigin, xrPickDir );
+									pickWallFromRay();
+
+								}
+
+							}
+
+							if ( selectedWall && ! wallFullyVisible( selectedWall ) ) {
+
+								selectedWall = null;
+								updateHudAndButtons();
+
+							}
 
 						}
 
