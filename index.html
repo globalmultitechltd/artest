@@ -1247,7 +1247,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 00:47</div>
+		<div id="version">version: 14:09</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -2008,7 +2008,7 @@
 
 				//
 
-				renderer = new THREE.WebGLRenderer( { antialias: true, alpha: true } );
+				renderer = new THREE.WebGLRenderer( { antialias: true, alpha: true, preserveDrawingBuffer: true } );
 				renderer.setPixelRatio( window.devicePixelRatio );
 				renderer.setSize( window.innerWidth, window.innerHeight );
 				renderer.setAnimationLoop( animate );
@@ -2050,7 +2050,7 @@
 
 				document.body.appendChild( ARButton.createButton( renderer, {
 					requiredFeatures: [ 'hit-test' ],
-					optionalFeatures: [ 'dom-overlay' ],
+					optionalFeatures: [ 'dom-overlay', 'camera-access' ],
 					domOverlay: { root: arOverlay }
 				} ) );
 
@@ -7311,6 +7311,11 @@
 					let pendingPointerPick = null;
 					let pendingXRPick = null;
 					let xrSession = null;
+					let xrGlBinding = null;
+					let cameraReadbackFbo = null;
+					let cameraReadbackPixels = null;
+					let cameraAccessAvailable = false;
+					let capturePending = null;
 					const wallCaptureStore = new Map();
 					const cornerWorld = [ new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3() ];
 					const cornerPixels = [ new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2(), new THREE.Vector2() ];
@@ -7529,55 +7534,161 @@
 
 					}
 
-					function applyCapturedTextureToWall( wall, sourceCanvas, dataUrl ) {
+					function setRoomBoundaryVisible( visible ) {
 
-						const prior = wallCaptureStore.get( wall.index );
-						if ( prior && prior.texture ) prior.texture.dispose();
-
-						const texture = new THREE.CanvasTexture( sourceCanvas );
-						configureCapturedTexture( texture );
-
-						if ( wall.mesh && wall.mesh.material && ! Array.isArray( wall.mesh.material ) ) {
-
-							wall.mesh.material.map = texture;
-							wall.mesh.material.needsUpdate = true;
-
-						}
-
-						wallCaptureStore.set( wall.index, { texture, dataUrl } );
+						if ( roomBounds && roomBounds.boundaryGroup ) roomBounds.boundaryGroup.visible = visible;
 
 					}
 
-					function captureSelectedWallImage() {
+					function disposeCameraReadback() {
 
-						if ( ! selectedWall || activeSessionMode === 'sim' ) return;
-						if ( ! wallFullyVisible( selectedWall ) ) {
+						const gl = renderer.getContext();
+						if ( cameraReadbackFbo && gl ) gl.deleteFramebuffer( cameraReadbackFbo );
+						cameraReadbackFbo = null;
+						cameraReadbackPixels = null;
+						xrGlBinding = null;
+						cameraAccessAvailable = false;
 
-							selectedWall = null;
-							updateHudAndButtons();
-							return;
+					}
+
+					function initCameraReadback() {
+
+						disposeCameraReadback();
+						xrSession = renderer.xr.getSession();
+						if ( ! xrSession || typeof XRWebGLBinding === 'undefined' ) return;
+
+						const gl = renderer.getContext();
+						if ( ! gl ) return;
+
+						try {
+
+							xrGlBinding = new XRWebGLBinding( xrSession, gl );
+							cameraReadbackFbo = gl.createFramebuffer();
+
+						} catch {
+
+							xrGlBinding = null;
+							cameraReadbackFbo = null;
 
 						}
+
+					}
+
+					function cameraPixelsToCanvas( pixels, width, height ) {
+
+						const canvas = document.createElement( 'canvas' );
+						canvas.width = width;
+						canvas.height = height;
+						const ctx = canvas.getContext( '2d' );
+						if ( ! ctx ) return null;
+
+						const imageData = ctx.createImageData( width, height );
+
+						for ( let y = 0; y < height; y ++ ) {
+
+							const srcRow = height - 1 - y;
+
+							for ( let x = 0; x < width; x ++ ) {
+
+								const srcIndex = ( srcRow * width + x ) * 4;
+								const dstIndex = ( y * width + x ) * 4;
+								imageData.data[ dstIndex ] = pixels[ srcIndex ];
+								imageData.data[ dstIndex + 1 ] = pixels[ srcIndex + 1 ];
+								imageData.data[ dstIndex + 2 ] = pixels[ srcIndex + 2 ];
+								imageData.data[ dstIndex + 3 ] = pixels[ srcIndex + 3 ];
+
+							}
+
+						}
+
+						ctx.putImageData( imageData, 0, 0 );
+						return canvas;
+
+					}
+
+					function readCameraViewToDisplayCanvas( frame, displayWidth, displayHeight ) {
+
+						if ( ! xrGlBinding || ! cameraReadbackFbo || ! frame || ! xrSession ) return null;
+
+						const referenceSpace = renderer.xr.getReferenceSpace();
+						const pose = frame.getViewerPose( referenceSpace );
+						if ( ! pose ) return null;
+
+						const gl = renderer.getContext();
+						let cameraView = null;
+
+						for ( const view of pose.views ) {
+
+							if ( view.camera ) {
+
+								cameraView = view;
+								break;
+
+							}
+
+						}
+
+						if ( ! cameraView || ! cameraView.camera ) return null;
+
+						cameraAccessAvailable = true;
+						const xrCamera = cameraView.camera;
+						const cameraTexture = xrGlBinding.getCameraImage( xrCamera );
+						if ( ! cameraTexture ) return null;
+
+						const camW = xrCamera.width;
+						const camH = xrCamera.height;
+						const byteCount = camW * camH * 4;
+
+						if ( ! cameraReadbackPixels || cameraReadbackPixels.length !== byteCount ) {
+
+							cameraReadbackPixels = new Uint8Array( byteCount );
+
+						}
+
+						const previousFramebuffer = gl.getParameter( gl.FRAMEBUFFER_BINDING );
+						gl.bindTexture( gl.TEXTURE_2D, cameraTexture );
+						gl.bindFramebuffer( gl.FRAMEBUFFER, cameraReadbackFbo );
+						gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, cameraTexture, 0 );
+
+						if ( gl.checkFramebufferStatus( gl.FRAMEBUFFER ) !== gl.FRAMEBUFFER_COMPLETE ) {
+
+							gl.bindFramebuffer( gl.FRAMEBUFFER, previousFramebuffer );
+							return null;
+
+						}
+
+						gl.readPixels( 0, 0, camW, camH, gl.RGBA, gl.UNSIGNED_BYTE, cameraReadbackPixels );
+						gl.bindFramebuffer( gl.FRAMEBUFFER, previousFramebuffer );
+
+						const cameraCanvas = cameraPixelsToCanvas( cameraReadbackPixels, camW, camH );
+						if ( ! cameraCanvas ) return null;
+
+						const displayCanvas = document.createElement( 'canvas' );
+						displayCanvas.width = displayWidth;
+						displayCanvas.height = displayHeight;
+						const displayCtx = displayCanvas.getContext( '2d' );
+						if ( ! displayCtx ) return null;
+
+						displayCtx.drawImage( cameraCanvas, 0, 0, displayWidth, displayHeight );
+						return displayCanvas;
+
+					}
+
+					function acquireDisplayFrameCanvas( frame ) {
 
 						const sourceCanvas = renderer.domElement;
-						if ( ! sourceCanvas.width || ! sourceCanvas.height ) {
+						if ( ! sourceCanvas.width || ! sourceCanvas.height ) return null;
 
-							updateHudAndButtons( 'Capture failed: renderer has no frame yet.' );
-							return;
-
-						}
+						const displayWidth = sourceCanvas.width;
+						const displayHeight = sourceCanvas.height;
+						const cameraFrame = readCameraViewToDisplayCanvas( frame, displayWidth, displayHeight );
+						if ( cameraFrame ) return cameraFrame;
 
 						const frameCanvas = document.createElement( 'canvas' );
-						frameCanvas.width = sourceCanvas.width;
-						frameCanvas.height = sourceCanvas.height;
+						frameCanvas.width = displayWidth;
+						frameCanvas.height = displayHeight;
 						const frameCtx = frameCanvas.getContext( '2d' );
-
-						if ( ! frameCtx ) {
-
-							updateHudAndButtons( 'Capture failed: canvas 2D context unavailable.' );
-							return;
-
-						}
+						if ( ! frameCtx ) return null;
 
 						try {
 
@@ -7585,12 +7696,40 @@
 
 						} catch {
 
-							updateHudAndButtons( 'Capture failed: camera frame access is blocked on this device/browser.' );
-							return;
+							return null;
 
 						}
 
-						const polygon = projectWallCornersToPixels( selectedWall, frameCanvas.width, frameCanvas.height );
+						return frameCanvas;
+
+					}
+
+					function isFrameMostlyEmpty( canvas ) {
+
+						const ctx = canvas.getContext( '2d' );
+						if ( ! ctx || canvas.width < 8 || canvas.height < 8 ) return true;
+
+						const sample = ctx.getImageData(
+							Math.floor( canvas.width * 0.5 ) - 2,
+							Math.floor( canvas.height * 0.5 ) - 2,
+							4,
+							4
+						).data;
+						let transparentCount = 0;
+
+						for ( let i = 3; i < sample.length; i += 4 ) {
+
+							if ( sample[ i ] < 16 ) transparentCount ++;
+
+						}
+
+						return transparentCount >= 12;
+
+					}
+
+					function cropWallFromFrameCanvas( wall, frameCanvas ) {
+
+						const polygon = projectWallCornersToPixels( wall, frameCanvas.width, frameCanvas.height );
 						let minX = Infinity;
 						let minY = Infinity;
 						let maxX = - Infinity;
@@ -7612,18 +7751,13 @@
 
 						const cropWidth = Math.max( 1, maxX - minX );
 						const cropHeight = Math.max( 1, maxY - minY );
-						if ( cropWidth < 4 || cropHeight < 4 ) {
-
-							updateHudAndButtons( 'Capture too small. Move closer and try again.' );
-							return;
-
-						}
+						if ( cropWidth < 4 || cropHeight < 4 ) return null;
 
 						const croppedCanvas = document.createElement( 'canvas' );
 						croppedCanvas.width = cropWidth;
 						croppedCanvas.height = cropHeight;
 						const cropCtx = croppedCanvas.getContext( '2d' );
-						if ( ! cropCtx ) return;
+						if ( ! cropCtx ) return null;
 
 						cropCtx.save();
 						cropCtx.beginPath();
@@ -7640,9 +7774,102 @@
 						cropCtx.drawImage( frameCanvas, - minX, - minY );
 						cropCtx.restore();
 
+						return croppedCanvas;
+
+					}
+
+					function applyCapturedTextureToWall( wall, sourceCanvas, dataUrl ) {
+
+						const prior = wallCaptureStore.get( wall.index );
+						if ( prior && prior.texture ) prior.texture.dispose();
+
+						const texture = new THREE.CanvasTexture( sourceCanvas );
+						configureCapturedTexture( texture );
+
+						if ( wall.mesh && wall.mesh.material && ! Array.isArray( wall.mesh.material ) ) {
+
+							const material = wall.mesh.material;
+							material.map = texture;
+							material.transparent = false;
+							material.opacity = 1;
+							material.color.setHex( 0xffffff );
+							if ( material.emissive ) material.emissive.setHex( 0x000000 );
+							material.needsUpdate = true;
+
+						}
+
+						wallCaptureStore.set( wall.index, { texture, dataUrl } );
+
+					}
+
+					function finishWallCapture( wall, frame ) {
+
+						const frameCanvas = acquireDisplayFrameCanvas( frame );
+						setRoomBoundaryVisible( true );
+
+						if ( ! frameCanvas ) {
+
+							updateHudAndButtons( 'Capture failed: could not read the AR camera frame on this device.' );
+							return;
+
+						}
+
+						if ( ! cameraAccessAvailable && isFrameMostlyEmpty( frameCanvas ) ) {
+
+							updateHudAndButtons( 'Capture failed: enable camera-access AR (Chrome on Android) and retry.' );
+							return;
+
+						}
+
+						const croppedCanvas = cropWallFromFrameCanvas( wall, frameCanvas );
+						if ( ! croppedCanvas ) {
+
+							updateHudAndButtons( 'Capture too small. Move closer and try again.' );
+							return;
+
+						}
+
 						const dataUrl = croppedCanvas.toDataURL( 'image/png' );
-						applyCapturedTextureToWall( selectedWall, croppedCanvas, dataUrl );
+						applyCapturedTextureToWall( wall, croppedCanvas, dataUrl );
 						updateHudAndButtons();
+
+					}
+
+					function captureSelectedWallImage() {
+
+						if ( ! selectedWall || activeSessionMode === 'sim' ) return;
+						if ( ! wallFullyVisible( selectedWall ) ) {
+
+							selectedWall = null;
+							updateHudAndButtons();
+							return;
+
+						}
+
+						capturePending = { wall: selectedWall, step: 'hide' };
+						updateHudAndButtons( 'Preparing capture…' );
+
+					}
+
+					function processCapturePending( frame ) {
+
+						if ( ! capturePending || ! frame ) return;
+
+						if ( capturePending.step === 'hide' ) {
+
+							setRoomBoundaryVisible( false );
+							capturePending.step = 'grab';
+							return;
+
+						}
+
+						if ( capturePending.step === 'grab' ) {
+
+							const wall = capturePending.wall;
+							capturePending = null;
+							finishWallCapture( wall, frame );
+
+						}
 
 					}
 
@@ -7771,6 +7998,8 @@
 							selectedWall = null;
 							pendingPointerPick = null;
 							pendingXRPick = null;
+							capturePending = null;
+							initCameraReadback();
 							renderer.domElement.style.touchAction = 'none';
 							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
 							xrSession = renderer.xr.getSession();
@@ -7788,6 +8017,9 @@
 
 							renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
 							renderer.domElement.style.touchAction = '';
+							capturePending = null;
+							setRoomBoundaryVisible( true );
+							disposeCameraReadback();
 
 							if ( xrSession ) {
 
@@ -7817,6 +8049,9 @@
 						onFrame( _timestamp, frame ) {
 
 							if ( ! frame || ! roomBounds ) return;
+
+							processCapturePending( frame );
+							if ( capturePending ) return;
 
 							if ( pendingPointerPick ) {
 
