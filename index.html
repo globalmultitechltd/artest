@@ -539,6 +539,27 @@
 				display: block;
 			}
 
+			#room-builder-hud {
+				display: none;
+				position: absolute;
+				left: 0;
+				right: 0;
+				top: 108px;
+				text-align: center;
+				color: #e2e8f0;
+				font-family: system-ui, sans-serif;
+				font-size: 15px;
+				font-weight: 600;
+				text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+				pointer-events: none;
+				padding: 0 12px;
+				white-space: pre-line;
+			}
+
+			#room-builder-hud.visible {
+				display: block;
+			}
+
 			#photogrammetry-controls {
 				display: none;
 				position: absolute;
@@ -1247,7 +1268,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 14:09</div>
+		<div id="version">version: 13:34</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1293,6 +1314,7 @@
 			<button id="ar-exit-btn" type="button" aria-label="Exit to home screen" title="Exit to home">×</button>
 			<div id="bounce-hud">Hits: 0</div>
 			<div id="photogrammetry-hud">Tap a room wall to begin capture</div>
+			<div id="room-builder-hud">Establishing AR bearings…</div>
 			<div id="bowling-hud">Point at the floor to place the bowling alley</div>
 			<div id="bowling-power-wrap" aria-hidden="true">
 				<div id="bowling-power-label">Roll power</div>
@@ -2091,6 +2113,7 @@
 				registerMiniGame( createZombiesGame() );
 				registerMiniGame( createBowlingGame() );
 				registerMiniGame( createPhotogrammetryGame() );
+				registerMiniGame( createRoomBuilderGame() );
 
 				setupWorldBuilderControls();
 				setupPaintControls();
@@ -2990,6 +3013,7 @@
 				const platformsMovePanel = document.getElementById( 'platforms-move-panel' );
 				const bowlingHud = document.getElementById( 'bowling-hud' );
 				const bowlingPowerWrap = document.getElementById( 'bowling-power-wrap' );
+				const roomBuilderHud = document.getElementById( 'room-builder-hud' );
 				const roomScaleSetupEl = document.getElementById( 'room-scale-setup' );
 				const simHelp = document.getElementById( 'sim-ar-help' );
 				const arExitBtn = document.getElementById( 'ar-exit-btn' );
@@ -3034,6 +3058,7 @@
 					platformsHud.classList.toggle( 'visible', isPlatforms );
 					platformsMovePanel.classList.toggle( 'visible', isPlatforms );
 					bowlingHud.classList.toggle( 'visible', selectedMiniGameId === 'bowling' );
+					roomBuilderHud.classList.toggle( 'visible', selectedMiniGameId === 'room-builder' );
 
 				}
 
@@ -3137,6 +3162,13 @@
 
 					}
 
+					if ( selectedMiniGameId === 'room-builder' ) {
+
+						startMiniGame( gameContext );
+						return;
+
+					}
+
 					if ( roomScaleEnabled ) {
 
 						if ( savedRoomBounds ) {
@@ -3203,6 +3235,7 @@
 					platformsMovePanel.classList.remove( 'visible' );
 					bowlingHud.classList.remove( 'visible' );
 					if ( bowlingPowerWrap ) bowlingPowerWrap.classList.remove( 'visible' );
+					if ( roomBuilderHud ) roomBuilderHud.classList.remove( 'visible' );
 					for ( const button of document.querySelectorAll( '.rc-car-drive-panel .rc-drive-button, .platforms-drive-panel .platforms-drive-button' ) ) {
 
 						button.classList.remove( 'pressed' );
@@ -13168,6 +13201,1058 @@
 								addSegment( lastTip, tipPos );
 								addJoint( tipPos );
 								lastTip.copy( tipPos );
+
+							}
+
+						}
+
+					};
+
+				}
+
+				return { id, label, create };
+
+			}
+
+			function createRoomBuilderGame() {
+
+				const id = 'room-builder';
+				const label = 'Room Builder';
+				const FIRST_POINT_CLOSE_RADIUS = 0.12;
+				const projectedPoint = new THREE.Vector3();
+				const raycaster = new THREE.Raycaster();
+				const pointer = new THREE.Vector2();
+				const xrPickOrigin = new THREE.Vector3();
+				const xrPickDir = new THREE.Vector3();
+				const cornerPixels = [];
+
+				function configureCapturedTexture( texture ) {
+
+					texture.colorSpace = THREE.SRGBColorSpace;
+					texture.wrapS = THREE.ClampToEdgeWrapping;
+					texture.wrapT = THREE.ClampToEdgeWrapping;
+					texture.minFilter = THREE.LinearFilter;
+					texture.magFilter = THREE.LinearFilter;
+					texture.generateMipmaps = false;
+					texture.needsUpdate = true;
+
+				}
+
+				function createIconMesh( drawFn, size = 0.22 ) {
+
+					const canvas = document.createElement( 'canvas' );
+					canvas.width = 128;
+					canvas.height = 128;
+					const ctx = canvas.getContext( '2d' );
+					if ( ctx ) drawFn( ctx, 128 );
+
+					const texture = new THREE.CanvasTexture( canvas );
+					texture.colorSpace = THREE.SRGBColorSpace;
+					const material = new THREE.MeshBasicMaterial( {
+						map: texture,
+						transparent: true,
+						depthTest: false,
+						depthWrite: false
+					} );
+					const mesh = new THREE.Mesh( new THREE.PlaneGeometry( size, size ), material );
+					mesh.renderOrder = 999;
+					mesh.userData.disposables = [ texture, material, mesh.geometry ];
+					return mesh;
+
+				}
+
+				function drawCameraIcon( ctx, size ) {
+
+					ctx.clearRect( 0, 0, size, size );
+					ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+					ctx.beginPath();
+					ctx.arc( size / 2, size / 2, size * 0.44, 0, Math.PI * 2 );
+					ctx.fill();
+					ctx.strokeStyle = '#f8fafc';
+					ctx.lineWidth = size * 0.045;
+					ctx.stroke();
+
+					ctx.fillStyle = '#f8fafc';
+					ctx.fillRect( size * 0.28, size * 0.34, size * 0.44, size * 0.32 );
+					ctx.beginPath();
+					ctx.moveTo( size * 0.52, size * 0.34 );
+					ctx.lineTo( size * 0.66, size * 0.24 );
+					ctx.lineTo( size * 0.72, size * 0.24 );
+					ctx.lineTo( size * 0.72, size * 0.44 );
+					ctx.lineTo( size * 0.66, size * 0.44 );
+					ctx.closePath();
+					ctx.fill();
+
+					ctx.fillStyle = '#38bdf8';
+					ctx.beginPath();
+					ctx.arc( size * 0.5, size * 0.5, size * 0.11, 0, Math.PI * 2 );
+					ctx.fill();
+
+				}
+
+				function drawTickIcon( ctx, size ) {
+
+					ctx.clearRect( 0, 0, size, size );
+					ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+					ctx.beginPath();
+					ctx.arc( size / 2, size / 2, size * 0.44, 0, Math.PI * 2 );
+					ctx.fill();
+					ctx.strokeStyle = '#22c55e';
+					ctx.lineWidth = size * 0.08;
+					ctx.lineCap = 'round';
+					ctx.lineJoin = 'round';
+					ctx.beginPath();
+					ctx.moveTo( size * 0.3, size * 0.52 );
+					ctx.lineTo( size * 0.44, size * 0.66 );
+					ctx.lineTo( size * 0.72, size * 0.36 );
+					ctx.stroke();
+
+				}
+
+				function create( { scene, renderer, camera, controller1, controller2 } ) {
+
+					let phase = 'waiting';
+					let bearingsReady = false;
+					let hitTestSource = null;
+					let hitTestSourceRequested = false;
+					let reticle = null;
+					let boundaryGroup = null;
+					let floorMesh = null;
+					let cameraIcon = null;
+					let tickIcon = null;
+					let pendingTap = false;
+					let pendingPointerPick = null;
+					let pendingXRPick = null;
+					let capturePending = null;
+					let capturedTexture = null;
+					let sessionStartTime = 0;
+
+					let xrSession = null;
+					let xrGlBinding = null;
+					let cameraReadbackFbo = null;
+					let cameraReadbackPixels = null;
+					let cameraAccessAvailable = false;
+
+					const vertices = [];
+					const markerMeshes = [];
+					const hitPos = new THREE.Vector3();
+					const hitQuat = new THREE.Quaternion();
+					const hitScale = new THREE.Vector3();
+					const polygonCenter = new THREE.Vector3();
+					const floorYRef = { value: 0 };
+
+					const hud = document.getElementById( 'room-builder-hud' );
+
+					function getViewCamera() {
+
+						if ( renderer.xr.isPresenting ) {
+
+							const xrCamera = renderer.xr.getCamera();
+							if ( xrCamera.cameras && xrCamera.cameras.length > 0 ) {
+
+								const eye = xrCamera.cameras[ 0 ];
+								eye.updateMatrixWorld( true );
+								return eye;
+
+							}
+
+							xrCamera.updateMatrixWorld( true );
+							return xrCamera;
+
+						}
+
+						camera.updateMatrixWorld( true );
+						return camera;
+
+					}
+
+					function updateHud( message ) {
+
+						if ( ! hud ) return;
+
+						if ( message ) {
+
+							hud.textContent = message;
+							return;
+
+						}
+
+						if ( phase === 'waiting' ) {
+
+							hud.textContent = bearingsReady
+								? 'AR bearings ready. Tap the floor to place the first corner.'
+								: 'Establishing AR bearings… Move your device slowly to scan the floor.';
+
+						} else if ( phase === 'marking' ) {
+
+							if ( vertices.length === 0 ) {
+
+								hud.textContent = 'Tap the floor to place the first corner.';
+
+							} else if ( vertices.length < 3 ) {
+
+								hud.textContent = 'Corner ' + vertices.length + ' placed. Add at least ' + ( 3 - vertices.length ) + ' more.';
+
+							} else {
+
+								hud.textContent = 'Corner ' + vertices.length + ' placed. Tap the first corner again to close the shape.';
+
+							}
+
+						} else if ( phase === 'capture' ) {
+
+							hud.textContent = 'Tap the camera icon in the center to capture the view inside your shape.';
+
+						} else {
+
+							hud.textContent = 'Capture complete. Walk around to view your room patch from different angles.';
+
+						}
+
+					}
+
+					function disposeGroup( group ) {
+
+						if ( ! group ) return;
+
+						scene.remove( group );
+						group.traverse( ( node ) => {
+
+							if ( node.geometry ) node.geometry.dispose();
+
+							if ( node.material ) {
+
+								if ( Array.isArray( node.material ) ) node.material.forEach( ( material ) => material.dispose() );
+								else node.material.dispose();
+
+							}
+
+							if ( node.userData && node.userData.disposables ) {
+
+								for ( const disposable of node.userData.disposables ) disposable.dispose();
+
+							}
+
+						} );
+
+					}
+
+					function disposeBoundaryVisuals() {
+
+						disposeGroup( boundaryGroup );
+						boundaryGroup = null;
+						floorMesh = null;
+
+					}
+
+					function disposeIcon( icon ) {
+
+						if ( ! icon ) return;
+						scene.remove( icon );
+						if ( icon.userData.disposables ) {
+
+							for ( const disposable of icon.userData.disposables ) disposable.dispose();
+
+						}
+
+					}
+
+					function getPolygonCenter( target ) {
+
+						target.set( 0, 0, 0 );
+
+						for ( const vertex of vertices ) target.add( vertex );
+
+						target.divideScalar( vertices.length );
+						target.y = floorYRef.value + 0.04;
+						return target;
+
+					}
+
+					function rebuildOpenBoundaryVisuals() {
+
+						disposeBoundaryVisuals();
+						if ( vertices.length < 2 ) return;
+
+						boundaryGroup = new THREE.Group();
+						const linePoints = vertices.map( ( vertex ) => new THREE.Vector3( vertex.x, floorYRef.value + 0.02, vertex.z ) );
+						const lineGeometry = new THREE.BufferGeometry().setFromPoints( linePoints );
+						const lineMaterial = new THREE.LineBasicMaterial( { color: 0x38bdf8 } );
+						boundaryGroup.add( new THREE.Line( lineGeometry, lineMaterial ) );
+						scene.add( boundaryGroup );
+
+					}
+
+					function buildClosedFloorMesh() {
+
+						const floorShape = new THREE.Shape();
+
+						for ( let i = 0; i < vertices.length; i ++ ) {
+
+							const vertex = vertices[ i ];
+							if ( i === 0 ) floorShape.moveTo( vertex.x, - vertex.z );
+							else floorShape.lineTo( vertex.x, - vertex.z );
+
+						}
+
+						floorShape.closePath();
+
+						const floorGeometry = new THREE.ShapeGeometry( floorShape );
+						floorGeometry.rotateX( - Math.PI / 2 );
+
+						const floorMaterial = new THREE.MeshBasicMaterial( {
+							color: 0xffffff,
+							transparent: true,
+							opacity: 0.35,
+							side: THREE.DoubleSide
+						} );
+
+						floorMesh = new THREE.Mesh( floorGeometry, floorMaterial );
+						floorMesh.position.y = floorYRef.value + 0.015;
+						return floorMesh;
+
+					}
+
+					function rebuildClosedBoundaryVisuals() {
+
+						disposeBoundaryVisuals();
+						if ( vertices.length < 3 ) return;
+
+						boundaryGroup = new THREE.Group();
+						const closedPoints = vertices.map( ( vertex ) => new THREE.Vector3( vertex.x, floorYRef.value + 0.02, vertex.z ) );
+						const lineGeometry = new THREE.BufferGeometry().setFromPoints( closedPoints );
+						const perimeterLine = new THREE.LineLoop( lineGeometry, new THREE.LineBasicMaterial( { color: 0x38bdf8 } ) );
+						boundaryGroup.add( perimeterLine );
+						boundaryGroup.add( buildClosedFloorMesh() );
+						scene.add( boundaryGroup );
+
+					}
+
+					function showCameraIcon() {
+
+						disposeIcon( cameraIcon );
+						cameraIcon = createIconMesh( drawCameraIcon );
+						getPolygonCenter( polygonCenter );
+						cameraIcon.position.copy( polygonCenter );
+						cameraIcon.userData.isRoomBuilderCamera = true;
+						scene.add( cameraIcon );
+
+					}
+
+					function showTickIcon() {
+
+						disposeIcon( cameraIcon );
+						cameraIcon = null;
+						disposeIcon( tickIcon );
+						tickIcon = createIconMesh( drawTickIcon );
+						getPolygonCenter( polygonCenter );
+						tickIcon.position.copy( polygonCenter );
+						scene.add( tickIcon );
+
+					}
+
+					function addVertex( matrix ) {
+
+						if ( phase !== 'marking' ) return;
+
+						matrix.decompose( hitPos, hitQuat, hitScale );
+
+						if ( vertices.length === 0 ) floorYRef.value = hitPos.y;
+
+						if ( vertices.length >= 3 ) {
+
+							const first = vertices[ 0 ];
+							const closeDist = Math.hypot( hitPos.x - first.x, hitPos.z - first.z );
+
+							if ( closeDist <= FIRST_POINT_CLOSE_RADIUS ) {
+
+								closePerimeter();
+								return;
+
+							}
+
+						}
+
+						vertices.push( new THREE.Vector3( hitPos.x, floorYRef.value, hitPos.z ) );
+
+						const marker = new THREE.Mesh(
+							new THREE.CylinderGeometry( 0.05, 0.05, 0.03, 16 ),
+							new THREE.MeshPhongMaterial( {
+								color: vertices.length === 1 ? 0xfbbf24 : 0x38bdf8,
+								emissive: vertices.length === 1 ? 0x713f12 : 0x0c4a6e
+							} )
+						);
+						marker.position.set( hitPos.x, floorYRef.value + 0.015, hitPos.z );
+						scene.add( marker );
+						markerMeshes.push( marker );
+
+						if ( vertices.length >= 2 ) rebuildOpenBoundaryVisuals();
+						updateHud();
+						updateFirstMarkerHighlight();
+
+					}
+
+					function closePerimeter() {
+
+						if ( vertices.length < 3 || phase !== 'marking' ) return;
+
+						for ( const marker of markerMeshes ) marker.visible = false;
+						phase = 'capture';
+						rebuildClosedBoundaryVisuals();
+						showCameraIcon();
+						updateHud();
+
+					}
+
+					function updateFirstMarkerHighlight() {
+
+						if ( markerMeshes.length === 0 ) return;
+
+						const firstMarker = markerMeshes[ 0 ];
+						const material = firstMarker.material;
+						const nearFirst = vertices.length >= 3 && reticle && reticle.visible &&
+							Math.hypot( hitPos.x - vertices[ 0 ].x, hitPos.z - vertices[ 0 ].z ) <= FIRST_POINT_CLOSE_RADIUS;
+
+						material.color.setHex( nearFirst ? 0x22c55e : 0xfbbf24 );
+						material.emissive.setHex( nearFirst ? 0x14532d : 0x713f12 );
+
+					}
+
+					function projectVerticesToPixels( viewCamera, width, height, outPixels ) {
+
+						while ( outPixels.length < vertices.length ) outPixels.push( new THREE.Vector2() );
+						outPixels.length = vertices.length;
+
+						for ( let i = 0; i < vertices.length; i ++ ) {
+
+							const vertex = vertices[ i ];
+							projectedPoint.set( vertex.x, floorYRef.value, vertex.z ).project( viewCamera );
+							outPixels[ i ].set(
+								( projectedPoint.x * 0.5 + 0.5 ) * width,
+								( - projectedPoint.y * 0.5 + 0.5 ) * height
+							);
+
+						}
+
+						return outPixels;
+
+					}
+
+					function applyCaptureUVs( geometry, viewCamera, minX, minY, cropWidth, cropHeight, canvasWidth, canvasHeight ) {
+
+						const position = geometry.attributes.position;
+						const uvArray = new Float32Array( position.count * 2 );
+						const worldPos = new THREE.Vector3();
+
+						for ( let i = 0; i < position.count; i ++ ) {
+
+							worldPos.fromBufferAttribute( position, i );
+							projectedPoint.copy( worldPos ).project( viewCamera );
+							const px = ( projectedPoint.x * 0.5 + 0.5 ) * canvasWidth;
+							const py = ( - projectedPoint.y * 0.5 + 0.5 ) * canvasHeight;
+							uvArray[ i * 2 ] = ( px - minX ) / cropWidth;
+							uvArray[ i * 2 + 1 ] = 1 - ( py - minY ) / cropHeight;
+
+						}
+
+						geometry.setAttribute( 'uv', new THREE.BufferAttribute( uvArray, 2 ) );
+
+					}
+
+					function disposeCameraReadback() {
+
+						const gl = renderer.getContext();
+						if ( cameraReadbackFbo && gl ) gl.deleteFramebuffer( cameraReadbackFbo );
+						cameraReadbackFbo = null;
+						cameraReadbackPixels = null;
+						xrGlBinding = null;
+						cameraAccessAvailable = false;
+
+					}
+
+					function initCameraReadback() {
+
+						disposeCameraReadback();
+						xrSession = renderer.xr.getSession();
+						if ( ! xrSession || typeof XRWebGLBinding === 'undefined' ) return;
+
+						const gl = renderer.getContext();
+						if ( ! gl ) return;
+
+						try {
+
+							xrGlBinding = new XRWebGLBinding( xrSession, gl );
+							cameraReadbackFbo = gl.createFramebuffer();
+
+						} catch {
+
+							xrGlBinding = null;
+							cameraReadbackFbo = null;
+
+						}
+
+					}
+
+					function cameraPixelsToCanvas( pixels, width, height ) {
+
+						const canvas = document.createElement( 'canvas' );
+						canvas.width = width;
+						canvas.height = height;
+						const ctx = canvas.getContext( '2d' );
+						if ( ! ctx ) return null;
+
+						const imageData = ctx.createImageData( width, height );
+
+						for ( let y = 0; y < height; y ++ ) {
+
+							const srcRow = height - 1 - y;
+
+							for ( let x = 0; x < width; x ++ ) {
+
+								const srcIndex = ( srcRow * width + x ) * 4;
+								const dstIndex = ( y * width + x ) * 4;
+								imageData.data[ dstIndex ] = pixels[ srcIndex ];
+								imageData.data[ dstIndex + 1 ] = pixels[ srcIndex + 1 ];
+								imageData.data[ dstIndex + 2 ] = pixels[ srcIndex + 2 ];
+								imageData.data[ dstIndex + 3 ] = pixels[ srcIndex + 3 ];
+
+							}
+
+						}
+
+						ctx.putImageData( imageData, 0, 0 );
+						return canvas;
+
+					}
+
+					function readCameraViewToDisplayCanvas( frame, displayWidth, displayHeight ) {
+
+						if ( ! xrGlBinding || ! cameraReadbackFbo || ! frame || ! xrSession ) return null;
+
+						const referenceSpace = renderer.xr.getReferenceSpace();
+						const pose = frame.getViewerPose( referenceSpace );
+						if ( ! pose ) return null;
+
+						const gl = renderer.getContext();
+						let cameraView = null;
+
+						for ( const view of pose.views ) {
+
+							if ( view.camera ) {
+
+								cameraView = view;
+								break;
+
+							}
+
+						}
+
+						if ( ! cameraView || ! cameraView.camera ) return null;
+
+						cameraAccessAvailable = true;
+						const xrCamera = cameraView.camera;
+						const cameraTexture = xrGlBinding.getCameraImage( xrCamera );
+						if ( ! cameraTexture ) return null;
+
+						const camW = xrCamera.width;
+						const camH = xrCamera.height;
+						const byteCount = camW * camH * 4;
+
+						if ( ! cameraReadbackPixels || cameraReadbackPixels.length !== byteCount ) {
+
+							cameraReadbackPixels = new Uint8Array( byteCount );
+
+						}
+
+						const previousFramebuffer = gl.getParameter( gl.FRAMEBUFFER_BINDING );
+						gl.bindTexture( gl.TEXTURE_2D, cameraTexture );
+						gl.bindFramebuffer( gl.FRAMEBUFFER, cameraReadbackFbo );
+						gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, cameraTexture, 0 );
+
+						if ( gl.checkFramebufferStatus( gl.FRAMEBUFFER ) !== gl.FRAMEBUFFER_COMPLETE ) {
+
+							gl.bindFramebuffer( gl.FRAMEBUFFER, previousFramebuffer );
+							return null;
+
+						}
+
+						gl.readPixels( 0, 0, camW, camH, gl.RGBA, gl.UNSIGNED_BYTE, cameraReadbackPixels );
+						gl.bindFramebuffer( gl.FRAMEBUFFER, previousFramebuffer );
+
+						const cameraCanvas = cameraPixelsToCanvas( cameraReadbackPixels, camW, camH );
+						if ( ! cameraCanvas ) return null;
+
+						const displayCanvas = document.createElement( 'canvas' );
+						displayCanvas.width = displayWidth;
+						displayCanvas.height = displayHeight;
+						const displayCtx = displayCanvas.getContext( '2d' );
+						if ( ! displayCtx ) return null;
+
+						displayCtx.drawImage( cameraCanvas, 0, 0, displayWidth, displayHeight );
+						return displayCanvas;
+
+					}
+
+					function acquireDisplayFrameCanvas( frame ) {
+
+						const sourceCanvas = renderer.domElement;
+						if ( ! sourceCanvas.width || ! sourceCanvas.height ) return null;
+
+						const displayWidth = sourceCanvas.width;
+						const displayHeight = sourceCanvas.height;
+						const cameraFrame = readCameraViewToDisplayCanvas( frame, displayWidth, displayHeight );
+						if ( cameraFrame ) return cameraFrame;
+
+						const frameCanvas = document.createElement( 'canvas' );
+						frameCanvas.width = displayWidth;
+						frameCanvas.height = displayHeight;
+						const frameCtx = frameCanvas.getContext( '2d' );
+						if ( ! frameCtx ) return null;
+
+						try {
+
+							frameCtx.drawImage( sourceCanvas, 0, 0, frameCanvas.width, frameCanvas.height );
+
+						} catch {
+
+							return null;
+
+						}
+
+						return frameCanvas;
+
+					}
+
+					function isFrameMostlyEmpty( canvas ) {
+
+						const ctx = canvas.getContext( '2d' );
+						if ( ! ctx || canvas.width < 8 || canvas.height < 8 ) return true;
+
+						const sample = ctx.getImageData(
+							Math.floor( canvas.width * 0.5 ) - 2,
+							Math.floor( canvas.height * 0.5 ) - 2,
+							4,
+							4
+						).data;
+						let transparentCount = 0;
+
+						for ( let i = 3; i < sample.length; i += 4 ) {
+
+							if ( sample[ i ] < 16 ) transparentCount ++;
+
+						}
+
+						return transparentCount >= 12;
+
+					}
+
+					function cropPolygonFromFrameCanvas( frameCanvas, viewCamera ) {
+
+						const polygon = projectVerticesToPixels( viewCamera, frameCanvas.width, frameCanvas.height, cornerPixels );
+						let minX = Infinity;
+						let minY = Infinity;
+						let maxX = - Infinity;
+						let maxY = - Infinity;
+
+						for ( const point of polygon ) {
+
+							minX = Math.min( minX, point.x );
+							minY = Math.min( minY, point.y );
+							maxX = Math.max( maxX, point.x );
+							maxY = Math.max( maxY, point.y );
+
+						}
+
+						minX = THREE.MathUtils.clamp( Math.floor( minX ), 0, frameCanvas.width - 1 );
+						minY = THREE.MathUtils.clamp( Math.floor( minY ), 0, frameCanvas.height - 1 );
+						maxX = THREE.MathUtils.clamp( Math.ceil( maxX ), 1, frameCanvas.width );
+						maxY = THREE.MathUtils.clamp( Math.ceil( maxY ), 1, frameCanvas.height );
+
+						const cropWidth = Math.max( 1, maxX - minX );
+						const cropHeight = Math.max( 1, maxY - minY );
+						if ( cropWidth < 4 || cropHeight < 4 ) return null;
+
+						const croppedCanvas = document.createElement( 'canvas' );
+						croppedCanvas.width = cropWidth;
+						croppedCanvas.height = cropHeight;
+						const cropCtx = croppedCanvas.getContext( '2d' );
+						if ( ! cropCtx ) return null;
+
+						cropCtx.save();
+						cropCtx.beginPath();
+
+						for ( let i = 0; i < polygon.length; i ++ ) {
+
+							const px = polygon[ i ].x - minX;
+							const py = polygon[ i ].y - minY;
+							if ( i === 0 ) cropCtx.moveTo( px, py );
+							else cropCtx.lineTo( px, py );
+
+						}
+
+						cropCtx.closePath();
+						cropCtx.clip();
+						cropCtx.drawImage( frameCanvas, - minX, - minY );
+						cropCtx.restore();
+
+						return {
+							canvas: croppedCanvas,
+							minX,
+							minY,
+							cropWidth,
+							cropHeight,
+							canvasWidth: frameCanvas.width,
+							canvasHeight: frameCanvas.height,
+							viewCamera
+						};
+
+					}
+
+					function applyCapturedTexture( cropResult ) {
+
+						if ( ! floorMesh ) return;
+
+						if ( capturedTexture ) capturedTexture.dispose();
+
+						capturedTexture = new THREE.CanvasTexture( cropResult.canvas );
+						configureCapturedTexture( capturedTexture );
+
+						applyCaptureUVs(
+							floorMesh.geometry,
+							cropResult.viewCamera,
+							cropResult.minX,
+							cropResult.minY,
+							cropResult.cropWidth,
+							cropResult.cropHeight,
+							cropResult.canvasWidth,
+							cropResult.canvasHeight
+						);
+
+						floorMesh.material.dispose();
+						floorMesh.material = new THREE.MeshBasicMaterial( {
+							map: capturedTexture,
+							transparent: true,
+							side: THREE.DoubleSide
+						} );
+
+					}
+
+					function finishCapture( frame ) {
+
+						const viewCamera = getViewCamera();
+						const frameCanvas = acquireDisplayFrameCanvas( frame );
+
+						if ( boundaryGroup ) boundaryGroup.visible = true;
+
+						if ( ! frameCanvas ) {
+
+							updateHud( 'Capture failed: could not read the AR camera frame on this device.' );
+							return;
+
+						}
+
+						if ( activeSessionMode !== 'sim' && ! cameraAccessAvailable && isFrameMostlyEmpty( frameCanvas ) ) {
+
+							updateHud( 'Capture failed: enable camera-access AR (Chrome on Android) and retry.' );
+							return;
+
+						}
+
+						const cropResult = cropPolygonFromFrameCanvas( frameCanvas, viewCamera );
+						if ( ! cropResult ) {
+
+							updateHud( 'Capture too small. Frame the shape fully and try again.' );
+							return;
+
+						}
+
+						applyCapturedTexture( cropResult );
+						phase = 'done';
+						showTickIcon();
+						updateHud();
+
+					}
+
+					function requestCapture() {
+
+						if ( phase !== 'capture' || ! cameraIcon ) return;
+						capturePending = { step: 'hide' };
+						updateHud( 'Preparing capture…' );
+
+					}
+
+					function processCapturePending( frame ) {
+
+						if ( ! capturePending || ! frame ) return;
+
+						if ( capturePending.step === 'hide' ) {
+
+							if ( boundaryGroup ) boundaryGroup.visible = false;
+							if ( cameraIcon ) cameraIcon.visible = false;
+							capturePending.step = 'grab';
+							return;
+
+						}
+
+						if ( capturePending.step === 'grab' ) {
+
+							capturePending = null;
+							finishCapture( frame );
+
+						}
+
+					}
+
+					function pickCameraIconFromPointer( clientX, clientY ) {
+
+						if ( phase !== 'capture' || ! cameraIcon ) return false;
+
+						pointer.x = ( clientX / window.innerWidth ) * 2 - 1;
+						pointer.y = - ( clientY / window.innerHeight ) * 2 + 1;
+						const viewCamera = getViewCamera();
+						raycaster.setFromCamera( pointer, viewCamera );
+						const hits = raycaster.intersectObject( cameraIcon, false );
+						return hits.length > 0;
+
+					}
+
+					function pickCameraIconFromXR( event ) {
+
+						if ( phase !== 'capture' || ! cameraIcon ) return false;
+
+						const targetRaySpace = event.targetRaySpace || event.inputSource?.targetRaySpace;
+						if ( ! targetRaySpace || ! event.frame ) return false;
+
+						const referenceSpace = renderer.xr.getReferenceSpace();
+						const pose = event.frame.getPose( targetRaySpace, referenceSpace );
+						if ( ! pose ) return false;
+
+						xrPickOrigin.set(
+							pose.transform.position.x,
+							pose.transform.position.y,
+							pose.transform.position.z
+						);
+						const orientation = pose.transform.orientation;
+						xrPickDir.set( 0, 0, - 1 ).applyQuaternion(
+							new THREE.Quaternion( orientation.x, orientation.y, orientation.z, orientation.w )
+						);
+						raycaster.set( xrPickOrigin, xrPickDir.normalize() );
+						const hits = raycaster.intersectObject( cameraIcon, false );
+						return hits.length > 0;
+
+					}
+
+					function onXRSelect( event ) {
+
+						if ( phase === 'capture' && pickCameraIconFromXR( event ) ) {
+
+							requestCapture();
+							return;
+
+						}
+
+						if ( phase === 'marking' && reticle && reticle.visible ) addVertex( reticle.matrix );
+
+					}
+
+					function onPointerDown( event ) {
+
+						if ( phase === 'waiting' ) return;
+
+						event.preventDefault();
+
+						if ( phase === 'capture' ) {
+
+							const point = event.changedTouches ? event.changedTouches[ 0 ] : event;
+							pendingPointerPick = { x: point.clientX, y: point.clientY };
+							return;
+
+						}
+
+						if ( phase === 'marking' && reticle && reticle.visible ) pendingTap = true;
+
+					}
+
+					function cleanupSession() {
+
+						controller1.removeEventListener( 'select', onXRSelect );
+						controller2.removeEventListener( 'select', onXRSelect );
+						renderer.domElement.removeEventListener( 'pointerdown', onPointerDown );
+
+						if ( hitTestSource ) {
+
+							hitTestSource.cancel();
+							hitTestSource = null;
+
+						}
+
+						hitTestSourceRequested = false;
+
+						if ( reticle ) {
+
+							scene.remove( reticle );
+							reticle.geometry.dispose();
+							reticle.material.dispose();
+							reticle = null;
+
+						}
+
+						for ( const marker of markerMeshes ) {
+
+							scene.remove( marker );
+							marker.geometry.dispose();
+							marker.material.dispose();
+
+						}
+
+						markerMeshes.length = 0;
+						disposeBoundaryVisuals();
+						disposeIcon( cameraIcon );
+						disposeIcon( tickIcon );
+						cameraIcon = null;
+						tickIcon = null;
+
+						if ( capturedTexture ) {
+
+							capturedTexture.dispose();
+							capturedTexture = null;
+
+						}
+
+						disposeCameraReadback();
+						vertices.length = 0;
+						phase = 'waiting';
+						bearingsReady = false;
+						capturePending = null;
+						pendingTap = false;
+						pendingPointerPick = null;
+
+					}
+
+					reticle = new THREE.Mesh(
+						new THREE.RingGeometry( 0.12, 0.17, 32 ).rotateX( - Math.PI / 2 ),
+						new THREE.MeshBasicMaterial( { color: 0x38bdf8 } )
+					);
+					reticle.matrixAutoUpdate = false;
+					reticle.visible = false;
+
+					return {
+
+						onSessionStart() {
+
+							phase = 'waiting';
+							bearingsReady = false;
+							vertices.length = 0;
+							hitTestSourceRequested = false;
+							hitTestSource = null;
+							pendingTap = false;
+							pendingPointerPick = null;
+							capturePending = null;
+							sessionStartTime = performance.now();
+
+							scene.add( reticle );
+							controller1.addEventListener( 'select', onXRSelect );
+							controller2.addEventListener( 'select', onXRSelect );
+							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
+							initCameraReadback();
+							updateHud();
+
+						},
+
+						onSessionEnd() {
+
+							cleanupSession();
+
+						},
+
+						onFrame( timestamp, frame ) {
+
+							if ( ! frame ) return;
+
+							const referenceSpace = renderer.xr.getReferenceSpace();
+							const session = renderer.xr.getSession();
+
+							if ( hitTestSourceRequested === false ) {
+
+								session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
+
+									session.requestHitTestSource( { space: viewerSpace } ).then( function ( source ) {
+
+										hitTestSource = source;
+
+									} );
+
+								} );
+
+								session.addEventListener( 'end', function () {
+
+									hitTestSourceRequested = false;
+									hitTestSource = null;
+
+								} );
+
+								hitTestSourceRequested = true;
+
+							}
+
+							if ( pendingPointerPick ) {
+
+								if ( pickCameraIconFromPointer( pendingPointerPick.x, pendingPointerPick.y ) ) requestCapture();
+								pendingPointerPick = null;
+
+							}
+
+							processCapturePending( frame );
+
+							const viewCamera = getViewCamera();
+
+							if ( cameraIcon ) cameraIcon.lookAt( viewCamera.position );
+							if ( tickIcon ) tickIcon.lookAt( viewCamera.position );
+
+							if ( hitTestSource && ( phase === 'waiting' || phase === 'marking' ) ) {
+
+								const hitTestResults = frame.getHitTestResults( hitTestSource );
+
+								if ( hitTestResults.length ) {
+
+									reticle.visible = true;
+									reticle.matrix.fromArray( hitTestResults[ 0 ].getPose( referenceSpace ).transform.matrix );
+									reticle.matrix.decompose( hitPos, hitQuat, hitScale );
+
+									if ( phase === 'waiting' ) {
+
+										bearingsReady = true;
+										phase = 'marking';
+										updateHud();
+
+									}
+
+									if ( phase === 'marking' ) updateFirstMarkerHighlight();
+
+								} else {
+
+									reticle.visible = false;
+
+								}
+
+							} else if ( reticle ) {
+
+								reticle.visible = false;
+
+							}
+
+							if ( pendingTap && reticle && reticle.visible && phase === 'marking' ) {
+
+								pendingTap = false;
+								addVertex( reticle.matrix );
+
+							}
+
+							if ( phase === 'waiting' && ! bearingsReady && performance.now() - sessionStartTime > 3500 ) {
+
+								bearingsReady = true;
+								phase = 'marking';
+								updateHud( 'AR bearings ready. Tap the floor to place the first corner.' );
 
 							}
 
