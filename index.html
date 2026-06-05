@@ -560,6 +560,62 @@
 				display: block;
 			}
 
+			#room-builder-hud.is-error {
+				color: #fecaca;
+			}
+
+			#room-builder-error {
+				display: none;
+				position: absolute;
+				left: 50%;
+				top: 50%;
+				transform: translate( -50%, -50% );
+				z-index: 12;
+				width: min( 92vw, 420px );
+				max-height: min( 70vh, 520px );
+				overflow: auto;
+				padding: 16px 18px;
+				border-radius: 14px;
+				border: 1px solid rgba( 248, 113, 113, 0.65 );
+				background: rgba( 69, 10, 10, 0.94 );
+				color: #fee2e2;
+				font-family: system-ui, sans-serif;
+				font-size: 14px;
+				line-height: 1.45;
+				box-shadow: 0 16px 40px rgba( 0, 0, 0, 0.45 );
+				pointer-events: auto;
+				white-space: pre-wrap;
+				word-break: break-word;
+			}
+
+			#room-builder-error.visible {
+				display: block;
+			}
+
+			#room-builder-error-title {
+				margin: 0 0 10px;
+				font-size: 16px;
+				font-weight: 700;
+				color: #fecaca;
+			}
+
+			#room-builder-error-message {
+				margin: 0 0 12px;
+			}
+
+			#room-builder-error-dismiss {
+				width: 100%;
+				padding: 10px 12px;
+				border: 1px solid rgba( 254, 202, 202, 0.45 );
+				border-radius: 10px;
+				background: rgba( 127, 29, 29, 0.85 );
+				color: #fff;
+				font-family: system-ui, sans-serif;
+				font-size: 13px;
+				font-weight: 700;
+				cursor: pointer;
+			}
+
 			#photogrammetry-controls {
 				display: none;
 				position: absolute;
@@ -1268,7 +1324,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:55</div>
+		<div id="version">version: 14:02</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -1315,6 +1371,11 @@
 			<div id="bounce-hud">Hits: 0</div>
 			<div id="photogrammetry-hud">Tap a room wall to begin capture</div>
 			<div id="room-builder-hud">Establishing AR bearings…</div>
+			<div id="room-builder-error" role="alert" aria-live="assertive">
+				<div id="room-builder-error-title">Room Builder error</div>
+				<div id="room-builder-error-message"></div>
+				<button id="room-builder-error-dismiss" type="button">Dismiss</button>
+			</div>
 			<div id="bowling-hud">Point at the floor to place the bowling alley</div>
 			<div id="bowling-power-wrap" aria-hidden="true">
 				<div id="bowling-power-label">Roll power</div>
@@ -3014,6 +3075,7 @@
 				const bowlingHud = document.getElementById( 'bowling-hud' );
 				const bowlingPowerWrap = document.getElementById( 'bowling-power-wrap' );
 				const roomBuilderHud = document.getElementById( 'room-builder-hud' );
+				const roomBuilderError = document.getElementById( 'room-builder-error' );
 				const roomScaleSetupEl = document.getElementById( 'room-scale-setup' );
 				const simHelp = document.getElementById( 'sim-ar-help' );
 				const arExitBtn = document.getElementById( 'ar-exit-btn' );
@@ -3236,6 +3298,7 @@
 					bowlingHud.classList.remove( 'visible' );
 					if ( bowlingPowerWrap ) bowlingPowerWrap.classList.remove( 'visible' );
 					if ( roomBuilderHud ) roomBuilderHud.classList.remove( 'visible' );
+					if ( roomBuilderError ) roomBuilderError.classList.remove( 'visible' );
 					for ( const button of document.querySelectorAll( '.rc-car-drive-panel .rc-drive-button, .platforms-drive-panel .platforms-drive-button' ) ) {
 
 						button.classList.remove( 'pressed' );
@@ -13310,6 +13373,149 @@
 					const floorYRef = { value: 0 };
 
 					const hud = document.getElementById( 'room-builder-hud' );
+					const errorPanel = document.getElementById( 'room-builder-error' );
+					const errorMessageEl = document.getElementById( 'room-builder-error-message' );
+					const errorDismissBtn = document.getElementById( 'room-builder-error-dismiss' );
+					const canvasHost = renderer.domElement.parentElement || renderer.domElement;
+
+					let captureWatchdog = null;
+					const captureErrorHandlers = [];
+
+					function formatCaptureError( error ) {
+
+						if ( ! error ) return '';
+						if ( typeof error === 'string' ) return error;
+						if ( error.message ) return error.message;
+						return String( error );
+
+					}
+
+					function clearCaptureError() {
+
+						if ( hud ) hud.classList.remove( 'is-error' );
+						if ( errorPanel ) errorPanel.classList.remove( 'visible' );
+						if ( errorMessageEl ) errorMessageEl.textContent = '';
+
+					}
+
+					function showCaptureError( message, error ) {
+
+						const detail = formatCaptureError( error );
+						const fullMessage = detail && detail !== message
+							? message + '\n\nDetails: ' + detail
+							: message;
+
+						if ( hud ) {
+
+							hud.textContent = message;
+							hud.classList.add( 'is-error' );
+
+						}
+
+						if ( errorMessageEl ) errorMessageEl.textContent = fullMessage;
+						if ( errorPanel ) errorPanel.classList.add( 'visible' );
+
+					}
+
+					function clearCaptureWatchdog() {
+
+						if ( captureWatchdog !== null ) {
+
+							clearTimeout( captureWatchdog );
+							captureWatchdog = null;
+
+						}
+
+					}
+
+					function startCaptureWatchdog() {
+
+						clearCaptureWatchdog();
+						captureWatchdog = setTimeout( () => {
+
+							if ( phase !== 'capture' ) return;
+							failCapture( 'Capture timed out. Try a smaller shape, hold the phone steady, then close the shape again.', 'timeout' );
+
+						}, 10000 );
+
+					}
+
+					function onCaptureWindowError( event ) {
+
+						if ( phase !== 'capture' ) return;
+						event.preventDefault();
+						failCapture( 'Capture error: ' + ( event.message || 'unexpected script error' ), event.error || event.message );
+						return true;
+
+					}
+
+					function onCaptureUnhandledRejection( event ) {
+
+						if ( phase !== 'capture' ) return;
+						event.preventDefault();
+						failCapture( 'Capture error: ' + formatCaptureError( event.reason ), event.reason );
+
+					}
+
+					function onCaptureContextLost( event ) {
+
+						event.preventDefault();
+						failCapture( 'Capture error: the graphics context was lost on this device.', 'webglcontextlost' );
+
+					}
+
+					function attachCaptureErrorHandlers() {
+
+						detachCaptureErrorHandlers();
+						captureErrorHandlers.push( [ window, 'error', onCaptureWindowError ] );
+						captureErrorHandlers.push( [ window, 'unhandledrejection', onCaptureUnhandledRejection ] );
+						captureErrorHandlers.push( [ canvasHost, 'webglcontextlost', onCaptureContextLost ] );
+
+						for ( const [ target, type, handler ] of captureErrorHandlers ) {
+
+							target.addEventListener( type, handler );
+
+						}
+
+						if ( errorDismissBtn ) {
+
+							errorDismissBtn.addEventListener( 'click', onErrorDismissClick );
+							errorDismissBtn.addEventListener( 'beforexrselect', ( event ) => event.preventDefault() );
+
+						}
+
+					}
+
+					function detachCaptureErrorHandlers() {
+
+						for ( const [ target, type, handler ] of captureErrorHandlers ) {
+
+							target.removeEventListener( type, handler );
+
+						}
+
+						captureErrorHandlers.length = 0;
+
+						if ( errorDismissBtn ) errorDismissBtn.removeEventListener( 'click', onErrorDismissClick );
+
+					}
+
+					function onErrorDismissClick( event ) {
+
+						event.preventDefault();
+						event.stopPropagation();
+						clearCaptureError();
+
+						if ( phase === 'failed' && hud ) {
+
+							hud.textContent = 'Capture failed. Tap × to exit, then try again with a smaller shape.';
+							return;
+
+						}
+
+						updateHud();
+
+					}
 
 					function getViewCamera() {
 
@@ -13341,6 +13547,7 @@
 						if ( message ) {
 
 							hud.textContent = message;
+							if ( phase !== 'failed' ) hud.classList.remove( 'is-error' );
 							return;
 
 						}
@@ -13371,8 +13578,13 @@
 
 							hud.textContent = 'Capturing view inside your shape…';
 
+						} else if ( phase === 'failed' ) {
+
+							return;
+
 						} else {
 
+							hud.classList.remove( 'is-error' );
 							hud.textContent = 'Capture complete. Walk around to view your room patch from different angles.';
 
 						}
@@ -13621,9 +13833,10 @@
 
 					}
 
-					function failCapture( message ) {
+					function failCapture( message, error ) {
 
 						capturePending = null;
+						clearCaptureWatchdog();
 						if ( boundaryGroup ) boundaryGroup.visible = true;
 
 						if ( captureAttempts < 1 ) {
@@ -13636,8 +13849,8 @@
 						}
 
 						captureAttempts = 0;
-						phase = 'done';
-						updateHud( message || 'Capture failed. Exit and try again with a smaller shape.' );
+						phase = 'failed';
+						showCaptureError( message || 'Capture failed. Exit and try again with a smaller shape.', error );
 
 					}
 
@@ -13811,13 +14024,11 @@
 
 					function acquireDisplayFrameCanvas( frame ) {
 
+						void frame;
 						const sourceCanvas = renderer.domElement;
 						if ( ! sourceCanvas.width || ! sourceCanvas.height ) return null;
 
 						const target = getScaledCaptureSize( sourceCanvas.width, sourceCanvas.height, MAX_CAPTURE_DIM );
-						const cameraFrame = readCameraViewToDisplayCanvas( frame, target.width, target.height );
-						if ( cameraFrame ) return cameraFrame;
-
 						const frameCanvas = document.createElement( 'canvas' );
 						frameCanvas.width = target.width;
 						frameCanvas.height = target.height;
@@ -13828,9 +14039,9 @@
 
 							frameCtx.drawImage( sourceCanvas, 0, 0, frameCanvas.width, frameCanvas.height );
 
-						} catch {
+						} catch ( error ) {
 
-							return null;
+							throw new Error( 'Could not copy the on-screen AR view (' + formatCaptureError( error ) + ').' );
 
 						}
 
@@ -13954,33 +14165,45 @@
 
 					function finishCaptureFromCanvas( frameCanvas, viewCamera ) {
 
-						syncCaptureCamera( viewCamera );
+						try {
 
-						if ( ! frameCanvas ) {
+							syncCaptureCamera( viewCamera );
 
-							failCapture( 'Capture failed: could not read the AR camera frame on this device.' );
+							if ( ! frameCanvas ) {
+
+								failCapture( 'Capture failed: could not read the on-screen AR view.', 'empty-frame' );
+								return;
+
+							}
+
+							if ( isFrameMostlyEmpty( frameCanvas ) ) {
+
+								failCapture( 'Capture failed: the on-screen view was empty. Keep the shape in view and try again.', 'empty-view' );
+								return;
+
+							}
+
+							const cropResult = cropPolygonFromFrameCanvas( frameCanvas, captureCamera );
+							if ( ! cropResult ) {
+
+								failCapture( 'Capture too small. Frame the full shape on screen, then close it again.', 'crop-too-small' );
+								return;
+
+							}
+
+							applyCapturedTexture( cropResult );
+
+						} catch ( error ) {
+
+							failCapture( 'Capture failed while applying the image.', error );
 							return;
 
 						}
 
-						if ( activeSessionMode !== 'sim' && ! cameraAccessAvailable && isFrameMostlyEmpty( frameCanvas ) ) {
-
-							failCapture( 'Capture failed: enable camera-access AR (Chrome on Android) and retry.' );
-							return;
-
-						}
-
-						const cropResult = cropPolygonFromFrameCanvas( frameCanvas, captureCamera );
-						if ( ! cropResult ) {
-
-							failCapture( 'Capture too small. Frame the shape fully and close it again.' );
-							return;
-
-						}
-
-						applyCapturedTexture( cropResult );
+						clearCaptureError();
 						if ( boundaryGroup ) boundaryGroup.visible = true;
 						captureAttempts = 0;
+						clearCaptureWatchdog();
 						phase = 'done';
 						showTickIcon();
 						updateHud();
@@ -13989,6 +14212,7 @@
 
 					function finishCapture( frame ) {
 
+						void frame;
 						let frameCanvas = null;
 						const viewCamera = getViewCamera();
 
@@ -13996,34 +14220,36 @@
 
 							frameCanvas = acquireDisplayFrameCanvas( frame );
 
-						} catch ( _error ) {
+						} catch ( error ) {
 
-							failCapture( 'Capture failed: the device ran out of memory while reading the camera.' );
+							failCapture( 'Capture failed while reading the on-screen view.', error );
 							return;
 
 						}
 
 						const canvasToProcess = frameCanvas;
-						queueMicrotask( () => {
+						setTimeout( () => {
 
 							try {
 
 								finishCaptureFromCanvas( canvasToProcess, viewCamera );
 
-							} catch ( _error ) {
+							} catch ( error ) {
 
-								failCapture( 'Capture failed: the device ran out of memory while processing the image.' );
+								failCapture( 'Capture failed while processing the image.', error );
 
 							}
 
-						} );
+						}, 0 );
 
 					}
 
 					function requestCapture() {
 
 						if ( phase !== 'capture' || capturePending ) return;
+						clearCaptureError();
 						capturePending = { step: 'hide' };
+						startCaptureWatchdog();
 						updateHud( 'Preparing capture…' );
 
 					}
@@ -14055,9 +14281,9 @@
 
 								finishCapture( frame );
 
-							} catch ( _error ) {
+							} catch ( error ) {
 
-								failCapture( 'Capture failed unexpectedly. Close the shape again to retry.' );
+								failCapture( 'Capture failed unexpectedly.', error );
 
 							}
 
@@ -14073,7 +14299,7 @@
 
 					function onPointerDown( event ) {
 
-						if ( phase === 'waiting' || phase === 'capture' || phase === 'done' ) return;
+						if ( phase === 'waiting' || phase === 'capture' || phase === 'done' || phase === 'failed' ) return;
 
 						event.preventDefault();
 						if ( phase === 'marking' && reticle && reticle.visible ) pendingTap = true;
@@ -14124,6 +14350,9 @@
 
 						}
 
+						clearCaptureWatchdog();
+						clearCaptureError();
+						detachCaptureErrorHandlers();
 						disposeCameraReadback();
 						vertices.length = 0;
 						phase = 'waiting';
@@ -14153,12 +14382,13 @@
 							capturePending = null;
 							captureAttempts = 0;
 							sessionStartTime = performance.now();
+							clearCaptureError();
+							attachCaptureErrorHandlers();
 
 							scene.add( reticle );
 							controller1.addEventListener( 'select', onXRSelect );
 							controller2.addEventListener( 'select', onXRSelect );
 							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
-							initCameraReadback();
 							updateHud();
 
 						},
@@ -14173,82 +14403,94 @@
 
 							if ( ! frame ) return;
 
-							const referenceSpace = renderer.xr.getReferenceSpace();
-							const session = renderer.xr.getSession();
+							try {
 
-							if ( hitTestSourceRequested === false ) {
+								const referenceSpace = renderer.xr.getReferenceSpace();
+								const session = renderer.xr.getSession();
 
-								session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
+								if ( hitTestSourceRequested === false ) {
 
-									session.requestHitTestSource( { space: viewerSpace } ).then( function ( source ) {
+									session.requestReferenceSpace( 'viewer' ).then( function ( viewerSpace ) {
 
-										hitTestSource = source;
+										session.requestHitTestSource( { space: viewerSpace } ).then( function ( source ) {
+
+											hitTestSource = source;
+
+										} );
 
 									} );
 
-								} );
+									session.addEventListener( 'end', function () {
 
-								session.addEventListener( 'end', function () {
+										hitTestSourceRequested = false;
+										hitTestSource = null;
 
-									hitTestSourceRequested = false;
-									hitTestSource = null;
+									} );
 
-								} );
+									hitTestSourceRequested = true;
 
-								hitTestSourceRequested = true;
+								}
 
-							}
+								processCapturePending( frame );
 
-							processCapturePending( frame );
+								const viewCamera = getViewCamera();
 
-							const viewCamera = getViewCamera();
+								if ( tickIcon ) tickIcon.lookAt( viewCamera.position );
 
-							if ( tickIcon ) tickIcon.lookAt( viewCamera.position );
+								if ( hitTestSource && ( phase === 'waiting' || phase === 'marking' ) ) {
 
-							if ( hitTestSource && ( phase === 'waiting' || phase === 'marking' ) ) {
+									const hitTestResults = frame.getHitTestResults( hitTestSource );
 
-								const hitTestResults = frame.getHitTestResults( hitTestSource );
+									if ( hitTestResults.length ) {
 
-								if ( hitTestResults.length ) {
+										reticle.visible = true;
+										reticle.matrix.fromArray( hitTestResults[ 0 ].getPose( referenceSpace ).transform.matrix );
+										reticle.matrix.decompose( hitPos, hitQuat, hitScale );
 
-									reticle.visible = true;
-									reticle.matrix.fromArray( hitTestResults[ 0 ].getPose( referenceSpace ).transform.matrix );
-									reticle.matrix.decompose( hitPos, hitQuat, hitScale );
+										if ( phase === 'waiting' ) {
 
-									if ( phase === 'waiting' ) {
+											bearingsReady = true;
+											phase = 'marking';
+											updateHud();
 
-										bearingsReady = true;
-										phase = 'marking';
-										updateHud();
+										}
+
+										if ( phase === 'marking' ) updateFirstMarkerHighlight();
+
+									} else {
+
+										reticle.visible = false;
 
 									}
 
-									if ( phase === 'marking' ) updateFirstMarkerHighlight();
-
-								} else {
+								} else if ( reticle ) {
 
 									reticle.visible = false;
 
 								}
 
-							} else if ( reticle ) {
+								if ( pendingTap && reticle && reticle.visible && phase === 'marking' ) {
 
-								reticle.visible = false;
+									pendingTap = false;
+									addVertex( reticle.matrix );
 
-							}
+								}
 
-							if ( pendingTap && reticle && reticle.visible && phase === 'marking' ) {
+								if ( phase === 'waiting' && ! bearingsReady && performance.now() - sessionStartTime > 3500 ) {
 
-								pendingTap = false;
-								addVertex( reticle.matrix );
+									bearingsReady = true;
+									phase = 'marking';
+									updateHud( 'AR bearings ready. Tap the floor to place the first corner.' );
 
-							}
+								}
 
-							if ( phase === 'waiting' && ! bearingsReady && performance.now() - sessionStartTime > 3500 ) {
+							} catch ( error ) {
 
-								bearingsReady = true;
-								phase = 'marking';
-								updateHud( 'AR bearings ready. Tap the floor to place the first corner.' );
+								if ( phase === 'capture' || capturePending ) {
+
+									failCapture( 'Capture error during AR update.', error );
+
+								}
 
 							}
 
