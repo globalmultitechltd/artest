@@ -1268,7 +1268,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:45</div>
+		<div id="version">version: 13:55</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -13219,7 +13219,10 @@
 				const id = 'room-builder';
 				const label = 'Room Builder';
 				const FIRST_POINT_CLOSE_RADIUS = 0.12;
+				const MAX_CAPTURE_DIM = 960;
+				const MAX_CAMERA_READ_PIXELS = 1024 * 768;
 				const projectedPoint = new THREE.Vector3();
+				const captureCamera = new THREE.PerspectiveCamera();
 				const cornerPixels = [];
 
 				function configureCapturedTexture( texture ) {
@@ -13289,6 +13292,7 @@
 					let pendingTap = false;
 					let capturePending = null;
 					let capturedTexture = null;
+					let captureAttempts = 0;
 					let sessionStartTime = 0;
 
 					let xrSession = null;
@@ -13609,6 +13613,85 @@
 
 					}
 
+					function syncCaptureCamera( viewCamera ) {
+
+						captureCamera.projectionMatrix.copy( viewCamera.projectionMatrix );
+						captureCamera.matrixWorldInverse.copy( viewCamera.matrixWorldInverse );
+						captureCamera.matrixWorld.copy( viewCamera.matrixWorld );
+
+					}
+
+					function failCapture( message ) {
+
+						capturePending = null;
+						if ( boundaryGroup ) boundaryGroup.visible = true;
+
+						if ( captureAttempts < 1 ) {
+
+							captureAttempts ++;
+							updateHud( ( message || 'Capture failed.' ) + ' Retrying…' );
+							requestCapture();
+							return;
+
+						}
+
+						captureAttempts = 0;
+						phase = 'done';
+						updateHud( message || 'Capture failed. Exit and try again with a smaller shape.' );
+
+					}
+
+					function getScaledCaptureSize( width, height, maxDim = MAX_CAPTURE_DIM ) {
+
+						const maxEdge = Math.max( width, height ) || 1;
+						if ( maxEdge <= maxDim ) return { width, height };
+
+						const scale = maxDim / maxEdge;
+
+						return {
+							width: Math.max( 1, Math.round( width * scale ) ),
+							height: Math.max( 1, Math.round( height * scale ) )
+						};
+
+					}
+
+					function cameraPixelsToDownscaledCanvas( pixels, width, height, maxDim = MAX_CAPTURE_DIM ) {
+
+						const target = getScaledCaptureSize( width, height, maxDim );
+						const outW = target.width;
+						const outH = target.height;
+						const canvas = document.createElement( 'canvas' );
+						canvas.width = outW;
+						canvas.height = outH;
+						const ctx = canvas.getContext( '2d' );
+						if ( ! ctx ) return null;
+
+						const imageData = ctx.createImageData( outW, outH );
+						const data = imageData.data;
+
+						for ( let y = 0; y < outH; y ++ ) {
+
+							const srcY = height - 1 - Math.min( height - 1, Math.floor( y * height / outH ) );
+
+							for ( let x = 0; x < outW; x ++ ) {
+
+								const srcX = Math.min( width - 1, Math.floor( x * width / outW ) );
+								const srcIndex = ( srcY * width + srcX ) * 4;
+								const dstIndex = ( y * outW + x ) * 4;
+								data[ dstIndex ] = pixels[ srcIndex ];
+								data[ dstIndex + 1 ] = pixels[ srcIndex + 1 ];
+								data[ dstIndex + 2 ] = pixels[ srcIndex + 2 ];
+								data[ dstIndex + 3 ] = 255;
+
+							}
+
+						}
+
+						ctx.putImageData( imageData, 0, 0 );
+						return canvas;
+
+					}
+
 					function disposeCameraReadback() {
 
 						const gl = renderer.getContext();
@@ -13643,38 +13726,6 @@
 
 					}
 
-					function cameraPixelsToCanvas( pixels, width, height ) {
-
-						const canvas = document.createElement( 'canvas' );
-						canvas.width = width;
-						canvas.height = height;
-						const ctx = canvas.getContext( '2d' );
-						if ( ! ctx ) return null;
-
-						const imageData = ctx.createImageData( width, height );
-
-						for ( let y = 0; y < height; y ++ ) {
-
-							const srcRow = height - 1 - y;
-
-							for ( let x = 0; x < width; x ++ ) {
-
-								const srcIndex = ( srcRow * width + x ) * 4;
-								const dstIndex = ( y * width + x ) * 4;
-								imageData.data[ dstIndex ] = pixels[ srcIndex ];
-								imageData.data[ dstIndex + 1 ] = pixels[ srcIndex + 1 ];
-								imageData.data[ dstIndex + 2 ] = pixels[ srcIndex + 2 ];
-								imageData.data[ dstIndex + 3 ] = pixels[ srcIndex + 3 ];
-
-							}
-
-						}
-
-						ctx.putImageData( imageData, 0, 0 );
-						return canvas;
-
-					}
-
 					function readCameraViewToDisplayCanvas( frame, displayWidth, displayHeight ) {
 
 						if ( ! xrGlBinding || ! cameraReadbackFbo || ! frame || ! xrSession ) return null;
@@ -13699,14 +13750,18 @@
 
 						if ( ! cameraView || ! cameraView.camera ) return null;
 
-						cameraAccessAvailable = true;
 						const xrCamera = cameraView.camera;
 						const cameraTexture = xrGlBinding.getCameraImage( xrCamera );
 						if ( ! cameraTexture ) return null;
 
 						const camW = xrCamera.width;
 						const camH = xrCamera.height;
-						const byteCount = camW * camH * 4;
+						const pixelCount = camW * camH;
+
+						if ( pixelCount <= 0 || pixelCount > MAX_CAMERA_READ_PIXELS ) return null;
+
+						cameraAccessAvailable = true;
+						const byteCount = pixelCount * 4;
 
 						if ( ! cameraReadbackPixels || cameraReadbackPixels.length !== byteCount ) {
 
@@ -13715,30 +13770,41 @@
 						}
 
 						const previousFramebuffer = gl.getParameter( gl.FRAMEBUFFER_BINDING );
-						gl.bindTexture( gl.TEXTURE_2D, cameraTexture );
-						gl.bindFramebuffer( gl.FRAMEBUFFER, cameraReadbackFbo );
-						gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, cameraTexture, 0 );
+						let cameraCanvas = null;
 
-						if ( gl.checkFramebufferStatus( gl.FRAMEBUFFER ) !== gl.FRAMEBUFFER_COMPLETE ) {
+						try {
 
-							gl.bindFramebuffer( gl.FRAMEBUFFER, previousFramebuffer );
+							gl.bindTexture( gl.TEXTURE_2D, cameraTexture );
+							gl.bindFramebuffer( gl.FRAMEBUFFER, cameraReadbackFbo );
+							gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, cameraTexture, 0 );
+
+							if ( gl.checkFramebufferStatus( gl.FRAMEBUFFER ) !== gl.FRAMEBUFFER_COMPLETE ) return null;
+
+							gl.readPixels( 0, 0, camW, camH, gl.RGBA, gl.UNSIGNED_BYTE, cameraReadbackPixels );
+							cameraCanvas = cameraPixelsToDownscaledCanvas( cameraReadbackPixels, camW, camH, MAX_CAPTURE_DIM );
+
+						} catch ( _error ) {
+
 							return null;
+
+						} finally {
+
+							gl.bindTexture( gl.TEXTURE_2D, null );
+							gl.bindFramebuffer( gl.FRAMEBUFFER, previousFramebuffer );
 
 						}
 
-						gl.readPixels( 0, 0, camW, camH, gl.RGBA, gl.UNSIGNED_BYTE, cameraReadbackPixels );
-						gl.bindFramebuffer( gl.FRAMEBUFFER, previousFramebuffer );
-
-						const cameraCanvas = cameraPixelsToCanvas( cameraReadbackPixels, camW, camH );
 						if ( ! cameraCanvas ) return null;
 
+						const target = getScaledCaptureSize( displayWidth, displayHeight, MAX_CAPTURE_DIM );
 						const displayCanvas = document.createElement( 'canvas' );
-						displayCanvas.width = displayWidth;
-						displayCanvas.height = displayHeight;
+						displayCanvas.width = target.width;
+						displayCanvas.height = target.height;
 						const displayCtx = displayCanvas.getContext( '2d' );
 						if ( ! displayCtx ) return null;
 
-						displayCtx.drawImage( cameraCanvas, 0, 0, displayWidth, displayHeight );
+						displayCtx.drawImage( cameraCanvas, 0, 0, target.width, target.height );
+						cameraReadbackPixels = null;
 						return displayCanvas;
 
 					}
@@ -13748,14 +13814,13 @@
 						const sourceCanvas = renderer.domElement;
 						if ( ! sourceCanvas.width || ! sourceCanvas.height ) return null;
 
-						const displayWidth = sourceCanvas.width;
-						const displayHeight = sourceCanvas.height;
-						const cameraFrame = readCameraViewToDisplayCanvas( frame, displayWidth, displayHeight );
+						const target = getScaledCaptureSize( sourceCanvas.width, sourceCanvas.height, MAX_CAPTURE_DIM );
+						const cameraFrame = readCameraViewToDisplayCanvas( frame, target.width, target.height );
 						if ( cameraFrame ) return cameraFrame;
 
 						const frameCanvas = document.createElement( 'canvas' );
-						frameCanvas.width = displayWidth;
-						frameCanvas.height = displayHeight;
+						frameCanvas.width = target.width;
+						frameCanvas.height = target.height;
 						const frameCtx = frameCanvas.getContext( '2d' );
 						if ( ! frameCtx ) return null;
 
@@ -13887,39 +13952,71 @@
 
 					}
 
-					function finishCapture( frame ) {
+					function finishCaptureFromCanvas( frameCanvas, viewCamera ) {
 
-						const viewCamera = getViewCamera();
-						const frameCanvas = acquireDisplayFrameCanvas( frame );
-
-						if ( boundaryGroup ) boundaryGroup.visible = true;
+						syncCaptureCamera( viewCamera );
 
 						if ( ! frameCanvas ) {
 
-							updateHud( 'Capture failed: could not read the AR camera frame on this device.' );
+							failCapture( 'Capture failed: could not read the AR camera frame on this device.' );
 							return;
 
 						}
 
 						if ( activeSessionMode !== 'sim' && ! cameraAccessAvailable && isFrameMostlyEmpty( frameCanvas ) ) {
 
-							updateHud( 'Capture failed: enable camera-access AR (Chrome on Android) and retry.' );
+							failCapture( 'Capture failed: enable camera-access AR (Chrome on Android) and retry.' );
 							return;
 
 						}
 
-						const cropResult = cropPolygonFromFrameCanvas( frameCanvas, viewCamera );
+						const cropResult = cropPolygonFromFrameCanvas( frameCanvas, captureCamera );
 						if ( ! cropResult ) {
 
-							updateHud( 'Capture too small. Frame the shape fully and try again.' );
+							failCapture( 'Capture too small. Frame the shape fully and close it again.' );
 							return;
 
 						}
 
 						applyCapturedTexture( cropResult );
+						if ( boundaryGroup ) boundaryGroup.visible = true;
+						captureAttempts = 0;
 						phase = 'done';
 						showTickIcon();
 						updateHud();
+
+					}
+
+					function finishCapture( frame ) {
+
+						let frameCanvas = null;
+						const viewCamera = getViewCamera();
+
+						try {
+
+							frameCanvas = acquireDisplayFrameCanvas( frame );
+
+						} catch ( _error ) {
+
+							failCapture( 'Capture failed: the device ran out of memory while reading the camera.' );
+							return;
+
+						}
+
+						const canvasToProcess = frameCanvas;
+						queueMicrotask( () => {
+
+							try {
+
+								finishCaptureFromCanvas( canvasToProcess, viewCamera );
+
+							} catch ( _error ) {
+
+								failCapture( 'Capture failed: the device ran out of memory while processing the image.' );
+
+							}
+
+						} );
 
 					}
 
@@ -13938,6 +14035,13 @@
 						if ( capturePending.step === 'hide' ) {
 
 							if ( boundaryGroup ) boundaryGroup.visible = false;
+							capturePending.step = 'wait';
+							return;
+
+						}
+
+						if ( capturePending.step === 'wait' ) {
+
 							capturePending.step = 'grab';
 							return;
 
@@ -13946,7 +14050,16 @@
 						if ( capturePending.step === 'grab' ) {
 
 							capturePending = null;
-							finishCapture( frame );
+
+							try {
+
+								finishCapture( frame );
+
+							} catch ( _error ) {
+
+								failCapture( 'Capture failed unexpectedly. Close the shape again to retry.' );
+
+							}
 
 						}
 
@@ -14038,6 +14151,7 @@
 							hitTestSource = null;
 							pendingTap = false;
 							capturePending = null;
+							captureAttempts = 0;
 							sessionStartTime = performance.now();
 
 							scene.add( reticle );
