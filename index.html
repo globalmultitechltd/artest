@@ -1324,7 +1324,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 14:02</div>
+		<div id="version">version: 14:08</div>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -13282,8 +13282,8 @@
 				const id = 'room-builder';
 				const label = 'Room Builder';
 				const FIRST_POINT_CLOSE_RADIUS = 0.12;
-				const MAX_CAPTURE_DIM = 960;
-				const MAX_CAMERA_READ_PIXELS = 1024 * 768;
+				const MAX_CAPTURE_DIM = 720;
+				const MAX_CAMERA_READ_PIXELS = 1280 * 720;
 				const projectedPoint = new THREE.Vector3();
 				const captureCamera = new THREE.PerspectiveCamera();
 				const cornerPixels = [];
@@ -13973,19 +13973,16 @@
 
 						if ( pixelCount <= 0 || pixelCount > MAX_CAMERA_READ_PIXELS ) return null;
 
-						cameraAccessAvailable = true;
+						cameraAccessAvailable = false;
 						const byteCount = pixelCount * 4;
-
-						if ( ! cameraReadbackPixels || cameraReadbackPixels.length !== byteCount ) {
-
-							cameraReadbackPixels = new Uint8Array( byteCount );
-
-						}
+						let readPixels = null;
 
 						const previousFramebuffer = gl.getParameter( gl.FRAMEBUFFER_BINDING );
 						let cameraCanvas = null;
 
 						try {
+
+							readPixels = new Uint8Array( byteCount );
 
 							gl.bindTexture( gl.TEXTURE_2D, cameraTexture );
 							gl.bindFramebuffer( gl.FRAMEBUFFER, cameraReadbackFbo );
@@ -13993,8 +13990,10 @@
 
 							if ( gl.checkFramebufferStatus( gl.FRAMEBUFFER ) !== gl.FRAMEBUFFER_COMPLETE ) return null;
 
-							gl.readPixels( 0, 0, camW, camH, gl.RGBA, gl.UNSIGNED_BYTE, cameraReadbackPixels );
-							cameraCanvas = cameraPixelsToDownscaledCanvas( cameraReadbackPixels, camW, camH, MAX_CAPTURE_DIM );
+							gl.readPixels( 0, 0, camW, camH, gl.RGBA, gl.UNSIGNED_BYTE, readPixels );
+							cameraAccessAvailable = true;
+							cameraCanvas = cameraPixelsToDownscaledCanvas( readPixels, camW, camH, MAX_CAPTURE_DIM );
+							readPixels = null;
 
 						} catch ( _error ) {
 
@@ -14024,11 +14023,14 @@
 
 					function acquireDisplayFrameCanvas( frame ) {
 
-						void frame;
 						const sourceCanvas = renderer.domElement;
 						if ( ! sourceCanvas.width || ! sourceCanvas.height ) return null;
 
 						const target = getScaledCaptureSize( sourceCanvas.width, sourceCanvas.height, MAX_CAPTURE_DIM );
+						const cameraFrame = readCameraViewToDisplayCanvas( frame, target.width, target.height );
+						if ( cameraFrame ) return cameraFrame;
+
+						cameraAccessAvailable = false;
 						const frameCanvas = document.createElement( 'canvas' );
 						frameCanvas.width = target.width;
 						frameCanvas.height = target.height;
@@ -14060,15 +14062,15 @@
 							4,
 							4
 						).data;
-						let transparentCount = 0;
+						let darkCount = 0;
 
-						for ( let i = 3; i < sample.length; i += 4 ) {
+						for ( let i = 0; i < sample.length; i += 4 ) {
 
-							if ( sample[ i ] < 16 ) transparentCount ++;
+							if ( sample[ i ] + sample[ i + 1 ] + sample[ i + 2 ] < 24 && sample[ i + 3 ] < 16 ) darkCount ++;
 
 						}
 
-						return transparentCount >= 12;
+						return darkCount >= 12;
 
 					}
 
@@ -14171,14 +14173,24 @@
 
 							if ( ! frameCanvas ) {
 
-								failCapture( 'Capture failed: could not read the on-screen AR view.', 'empty-frame' );
+								failCapture( 'Capture failed: could not read the AR camera on this device.', 'no-frame' );
+								return;
+
+							}
+
+							if ( ! cameraAccessAvailable ) {
+
+								failCapture(
+									'Capture failed: AR camera access is unavailable. Use Chrome on Android with camera-access enabled, then try again.',
+									'no-camera-access'
+								);
 								return;
 
 							}
 
 							if ( isFrameMostlyEmpty( frameCanvas ) ) {
 
-								failCapture( 'Capture failed: the on-screen view was empty. Keep the shape in view and try again.', 'empty-view' );
+								failCapture( 'Capture failed: camera frame looked empty. Keep the shape in view and try again.', 'empty-view' );
 								return;
 
 							}
@@ -14212,7 +14224,6 @@
 
 					function finishCapture( frame ) {
 
-						void frame;
 						let frameCanvas = null;
 						const viewCamera = getViewCamera();
 
@@ -14222,7 +14233,7 @@
 
 						} catch ( error ) {
 
-							failCapture( 'Capture failed while reading the on-screen view.', error );
+							failCapture( 'Capture failed while reading the AR camera.', error );
 							return;
 
 						}
@@ -14389,6 +14400,7 @@
 							controller1.addEventListener( 'select', onXRSelect );
 							controller2.addEventListener( 'select', onXRSelect );
 							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
+							initCameraReadback();
 							updateHud();
 
 						},
