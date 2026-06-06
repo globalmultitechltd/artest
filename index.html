@@ -665,6 +665,34 @@
 				display: block;
 			}
 
+			#room-builder-trace-log {
+				display: none;
+				position: fixed;
+				left: 8px;
+				right: 8px;
+				bottom: 8px;
+				z-index: 10002;
+				max-height: 34vh;
+				overflow-y: auto;
+				-webkit-overflow-scrolling: touch;
+				margin: 0;
+				padding: 10px 12px;
+				border-radius: 10px;
+				border: 1px solid rgba( 251, 191, 36, 0.55 );
+				background: rgba( 15, 23, 42, 0.94 );
+				color: #fde68a;
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+				font-size: 11px;
+				line-height: 1.35;
+				white-space: pre-wrap;
+				word-break: break-word;
+				pointer-events: auto;
+			}
+
+			#room-builder-trace-log.visible {
+				display: block;
+			}
+
 			#photogrammetry-controls {
 				display: none;
 				position: absolute;
@@ -1373,7 +1401,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 14:23</div>
+		<div id="version">version: 14:31</div>
 		<div id="debug-mode-badge" hidden>DEBUG</div>
 		<pre id="app-debug-log" hidden aria-live="polite"></pre>
 
@@ -1521,6 +1549,7 @@
 			<div id="bounce-hud">Hits: 0</div>
 			<div id="photogrammetry-hud">Tap a room wall to begin capture</div>
 			<div id="room-builder-hud">Establishing AR bearings…</div>
+			<pre id="room-builder-trace-log" hidden aria-live="polite"></pre>
 			<div id="room-builder-error" role="alert" aria-live="assertive">
 				<div id="room-builder-error-title">Room Builder error</div>
 				<div id="room-builder-error-message"></div>
@@ -13526,7 +13555,9 @@
 					let captureStream = null;
 					let captureVideo = null;
 					let captureStreamRequested = false;
+					let cameraStreamStatus = 'not started';
 					let cameraAccessAvailable = false;
+					let usedFallbackFloorTexture = false;
 
 					const vertices = [];
 					const markerMeshes = [];
@@ -13540,6 +13571,7 @@
 					const errorPanel = document.getElementById( 'room-builder-error' );
 					const errorMessageEl = document.getElementById( 'room-builder-error-message' );
 					const errorDismissBtn = document.getElementById( 'room-builder-error-dismiss' );
+					const traceLogEl = document.getElementById( 'room-builder-trace-log' );
 					const canvasHost = renderer.domElement.parentElement || renderer.domElement;
 
 					let captureWatchdog = null;
@@ -13555,7 +13587,17 @@
 						try {
 
 							const previous = sessionStorage.getItem( ROOM_BUILDER_DEBUG_STORAGE_KEY ) || '';
-							sessionStorage.setItem( ROOM_BUILDER_DEBUG_STORAGE_KEY, ( previous + line + '\n' ).slice( - 4000 ) );
+							const nextTrace = ( previous + line + '\n' ).slice( - 8000 );
+							sessionStorage.setItem( ROOM_BUILDER_DEBUG_STORAGE_KEY, nextTrace );
+
+							if ( traceLogEl ) {
+
+								traceLogEl.hidden = false;
+								traceLogEl.classList.add( 'visible' );
+								traceLogEl.textContent = nextTrace;
+								traceLogEl.scrollTop = traceLogEl.scrollHeight;
+
+							}
 
 						} catch ( _error ) {}
 
@@ -13568,11 +13610,25 @@
 						try {
 
 							const saved = sessionStorage.getItem( ROOM_BUILDER_DEBUG_STORAGE_KEY );
-							if ( saved ) {
+							if ( ! saved ) return;
 
-								appDebugLog( '[RoomBuilder] restored trace:\n' + saved );
+							appDebugLog( '[RoomBuilder] restored trace:\n' + saved );
 
-								if ( errorMessageEl ) errorMessageEl.textContent = 'Last capture trace before crash:\n\n' + saved;
+							if ( traceLogEl ) {
+
+								traceLogEl.hidden = false;
+								traceLogEl.classList.add( 'visible' );
+								traceLogEl.textContent = saved;
+								traceLogEl.scrollTop = traceLogEl.scrollHeight;
+
+							}
+
+							const looksLikeCrash = saved.includes( 'ERROR' ) ||
+								( saved.includes( 'requestCapture' ) && ! saved.includes( 'finishCapture: done' ) );
+
+							if ( looksLikeCrash && errorMessageEl ) {
+
+								errorMessageEl.textContent = 'Last capture trace before crash:\n\n' + saved;
 								if ( errorPanel ) errorPanel.classList.add( 'visible' );
 
 							}
@@ -13786,7 +13842,9 @@
 						} else {
 
 							hud.classList.remove( 'is-error' );
-							hud.textContent = 'Capture complete. Walk around to view your room patch from different angles.';
+							hud.textContent = usedFallbackFloorTexture
+								? 'Floor textured. Camera snapshot is unavailable during AR on this device — walk around to view your patch.'
+								: 'Capture complete. Walk around to view your room patch from different angles.';
 
 						}
 
@@ -14085,7 +14143,7 @@
 
 						if ( ! captureVideo || ! captureVideo.videoWidth || ! captureVideo.videoHeight ) {
 
-							captureTrace( 'acquireFrame: no camera stream available' );
+							captureTrace( 'acquireFrame: no camera stream available (status: ' + cameraStreamStatus + ')' );
 							cameraAccessAvailable = false;
 							return null;
 
@@ -14125,32 +14183,40 @@
 					function buildGeneratedFloorCanvas() {
 
 						const canvas = document.createElement( 'canvas' );
-						canvas.width = 256;
-						canvas.height = 256;
+						canvas.width = 512;
+						canvas.height = 512;
 						const ctx = canvas.getContext( '2d' );
 						if ( ! ctx ) return null;
 
-						ctx.fillStyle = '#1f2937';
-						ctx.fillRect( 0, 0, 256, 256 );
+						ctx.fillStyle = '#6b4f2a';
+						ctx.fillRect( 0, 0, 512, 512 );
 
-						const gradient = ctx.createLinearGradient( 0, 0, 256, 256 );
-						gradient.addColorStop( 0, '#334155' );
-						gradient.addColorStop( 1, '#1e293b' );
-						ctx.fillStyle = gradient;
-						ctx.fillRect( 0, 0, 256, 256 );
+						const plankHeight = 64;
 
-						ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
-						ctx.lineWidth = 2;
+						for ( let row = 0; row < 512 / plankHeight; row ++ ) {
 
-						for ( let i = 0; i <= 256; i += 32 ) {
+							const y = row * plankHeight;
+							const shade = row % 2 === 0 ? '#8b6914' : '#7a5c1e';
+							ctx.fillStyle = shade;
+							ctx.fillRect( 0, y, 512, plankHeight - 2 );
 
+							const offset = ( row % 3 ) * 40;
+							ctx.strokeStyle = 'rgba( 45, 30, 12, 0.45 )';
+							ctx.lineWidth = 1;
+
+							for ( let x = - offset; x < 512; x += 96 ) {
+
+								ctx.beginPath();
+								ctx.moveTo( x, y );
+								ctx.lineTo( x, y + plankHeight - 2 );
+								ctx.stroke();
+
+							}
+
+							ctx.strokeStyle = 'rgba( 20, 12, 4, 0.35 )';
 							ctx.beginPath();
-							ctx.moveTo( i, 0 );
-							ctx.lineTo( i, 256 );
-							ctx.stroke();
-							ctx.beginPath();
-							ctx.moveTo( 0, i );
-							ctx.lineTo( 256, i );
+							ctx.moveTo( 0, y + plankHeight - 1 );
+							ctx.lineTo( 512, y + plankHeight - 1 );
 							ctx.stroke();
 
 						}
@@ -14324,6 +14390,7 @@
 						captureStream = null;
 						captureStreamRequested = false;
 						cameraAccessAvailable = false;
+						cameraStreamStatus = 'stopped';
 
 					}
 
@@ -14331,9 +14398,11 @@
 
 						if ( captureStreamRequested ) return;
 						captureStreamRequested = true;
+						cameraStreamStatus = 'requesting';
 
 						if ( ! navigator.mediaDevices || ! navigator.mediaDevices.getUserMedia ) {
 
+							cameraStreamStatus = 'unsupported';
 							captureTrace( 'cameraStream: getUserMedia unsupported' );
 							return;
 
@@ -14355,10 +14424,12 @@
 
 							const playPromise = video.play();
 							if ( playPromise && playPromise.catch ) playPromise.catch( function () {} );
+							cameraStreamStatus = 'acquired';
 							captureTrace( 'cameraStream: stream acquired' );
 
 						} ).catch( function ( error ) {
 
+							cameraStreamStatus = 'failed: ' + formatCaptureError( error );
 							captureTrace( 'cameraStream: getUserMedia failed ' + formatCaptureError( error ) );
 							captureStream = null;
 							captureVideo = null;
@@ -14369,9 +14440,10 @@
 
 					function finishCapture( frame ) {
 
-						captureTrace( 'finishCapture: start' );
+						captureTrace( 'finishCapture: start (cameraStream status: ' + cameraStreamStatus + ')' );
 						const viewCamera = getViewCamera();
 						syncCaptureCamera( viewCamera );
+						usedFallbackFloorTexture = false;
 
 						let frameCanvas = null;
 
@@ -14420,7 +14492,8 @@
 
 								applyGeneratedFloorTexture();
 								applied = true;
-								captureTrace( 'finishCapture: applied generated texture' );
+								usedFallbackFloorTexture = true;
+								captureTrace( 'finishCapture: applied generated texture (cameraStream status: ' + cameraStreamStatus + ')' );
 
 							} catch ( error ) {
 
@@ -14446,16 +14519,6 @@
 
 						if ( phase !== 'capture' || capturePending ) return;
 						clearCaptureError();
-
-						if ( isAppDebugMode() ) {
-
-							try {
-
-								sessionStorage.removeItem( ROOM_BUILDER_DEBUG_STORAGE_KEY );
-
-							} catch ( _error ) {}
-
-						}
 
 						captureTrace( 'requestCapture' );
 						capturePending = { step: 'hide' };
@@ -14595,6 +14658,8 @@
 							capturePending = null;
 							captureAttempts = 0;
 							sessionStartTime = performance.now();
+							usedFallbackFloorTexture = false;
+							cameraStreamStatus = 'not started';
 							clearCaptureError();
 							attachCaptureErrorHandlers();
 							restoreCaptureTrace();
