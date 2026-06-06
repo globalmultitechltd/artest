@@ -616,6 +616,55 @@
 				cursor: pointer;
 			}
 
+			#debug-mode-badge {
+				display: none;
+				position: fixed;
+				top: 52px;
+				right: 8px;
+				z-index: 10001;
+				padding: 6px 10px;
+				border-radius: 999px;
+				background: #b45309;
+				color: #fff;
+				font-family: system-ui, sans-serif;
+				font-size: 12px;
+				font-weight: 800;
+				letter-spacing: 0.06em;
+				pointer-events: none;
+				box-shadow: 0 2px 10px rgba( 0, 0, 0, 0.35 );
+			}
+
+			#debug-mode-badge.visible {
+				display: block;
+			}
+
+			#app-debug-log {
+				display: none;
+				position: fixed;
+				left: 8px;
+				right: 8px;
+				bottom: 8px;
+				z-index: 10001;
+				max-height: 38vh;
+				overflow: auto;
+				margin: 0;
+				padding: 10px 12px;
+				border-radius: 10px;
+				border: 1px solid rgba( 251, 191, 36, 0.55 );
+				background: rgba( 15, 23, 42, 0.94 );
+				color: #fde68a;
+				font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+				font-size: 11px;
+				line-height: 1.35;
+				white-space: pre-wrap;
+				word-break: break-word;
+				pointer-events: auto;
+			}
+
+			#app-debug-log.visible {
+				display: block;
+			}
+
 			#photogrammetry-controls {
 				display: none;
 				position: absolute;
@@ -1324,7 +1373,108 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 14:08</div>
+		<div id="version">version: 14:20</div>
+		<div id="debug-mode-badge" hidden>DEBUG</div>
+		<pre id="app-debug-log" hidden aria-live="polite"></pre>
+
+		<script>
+			( function () {
+
+				const DEBUG_STORAGE_KEY = 'artest-debug';
+
+				function queryDebugOn() {
+
+					const params = new URLSearchParams( window.location.search );
+					const value = params.get( 'debug' );
+
+					if ( value === '1' || value === 'true' || value === 'yes' ) return true;
+					if ( /debug/i.test( window.location.hash || '' ) ) return true;
+
+					try {
+
+						return sessionStorage.getItem( DEBUG_STORAGE_KEY ) === '1';
+
+					} catch ( _error ) {
+
+						return false;
+
+					}
+
+				}
+
+				if ( ! queryDebugOn() ) return;
+
+				window.__ARTEST_DEBUG__ = true;
+
+				try {
+
+					sessionStorage.setItem( DEBUG_STORAGE_KEY, '1' );
+
+				} catch ( _error ) {}
+
+				function appendDebugLog( message ) {
+
+					const log = document.getElementById( 'app-debug-log' );
+					const stamp = new Date().toISOString().slice( 11, 23 );
+					const line = stamp + ' ' + message;
+					console.log( '[artest]', line );
+
+					if ( ! log ) return line;
+
+					log.classList.add( 'visible' );
+					log.textContent = ( log.textContent + line + '\n' ).slice( - 5000 );
+					return line;
+
+				}
+
+				window.appDebugLog = appendDebugLog;
+
+				function bootDebugUi() {
+
+					const badge = document.getElementById( 'debug-mode-badge' );
+					const version = document.getElementById( 'version' );
+
+					if ( badge ) {
+
+						badge.hidden = false;
+						badge.classList.add( 'visible' );
+						badge.textContent = 'DEBUG ON';
+
+					}
+
+					appendDebugLog( 'Debug mode active' );
+					appendDebugLog( 'URL: ' + window.location.href );
+					if ( version ) appendDebugLog( version.textContent );
+
+				}
+
+				if ( document.readyState === 'loading' ) {
+
+					document.addEventListener( 'DOMContentLoaded', bootDebugUi );
+
+				} else {
+
+					bootDebugUi();
+
+				}
+
+				const script = document.createElement( 'script' );
+				script.src = 'https://cdn.jsdelivr.net/npm/eruda@3.4.1/eruda.min.js';
+				script.onload = function () {
+
+					eruda.init();
+					appendDebugLog( 'Eruda console loaded (tap the floating icon)' );
+
+				};
+				script.onerror = function () {
+
+					appendDebugLog( 'Eruda failed to load; use the log panel below or USB remote debugging' );
+
+				};
+				document.head.appendChild( script );
+
+			} )();
+		</script>
 
 		<div id="home-screen">
 			<div id="mini-game-picker">
@@ -2185,6 +2335,21 @@
 				setupXRSessionHandlers();
 
 				window.addEventListener( 'resize', onWindowResize );
+
+			}
+
+			const ROOM_BUILDER_DEBUG_STORAGE_KEY = 'room-builder-capture-trace';
+
+			function isAppDebugMode() {
+
+				return window.__ARTEST_DEBUG__ === true;
+
+			}
+
+			function appDebugLog( message ) {
+
+				if ( typeof window.appDebugLog === 'function' ) window.appDebugLog( message );
+				else if ( isAppDebugMode() ) console.log( '[artest]', message );
 
 			}
 
@@ -13381,6 +13546,35 @@
 					let captureWatchdog = null;
 					const captureErrorHandlers = [];
 
+					function captureTrace( step ) {
+
+						if ( ! isAppDebugMode() ) return;
+
+						const line = step;
+						appDebugLog( '[RoomBuilder] ' + line );
+
+						try {
+
+							const previous = sessionStorage.getItem( ROOM_BUILDER_DEBUG_STORAGE_KEY ) || '';
+							sessionStorage.setItem( ROOM_BUILDER_DEBUG_STORAGE_KEY, ( previous + line + '\n' ).slice( - 4000 ) );
+
+						} catch ( _error ) {}
+
+					}
+
+					function restoreCaptureTrace() {
+
+						if ( ! isAppDebugMode() ) return;
+
+						try {
+
+							const saved = sessionStorage.getItem( ROOM_BUILDER_DEBUG_STORAGE_KEY );
+							if ( saved ) appDebugLog( '[RoomBuilder] restored trace:\n' + saved );
+
+						} catch ( _error ) {}
+
+					}
+
 					function formatCaptureError( error ) {
 
 						if ( ! error ) return '';
@@ -13414,6 +13608,7 @@
 
 						if ( errorMessageEl ) errorMessageEl.textContent = fullMessage;
 						if ( errorPanel ) errorPanel.classList.add( 'visible' );
+						captureTrace( 'ERROR ' + message + ( detail ? ' | ' + detail : '' ) );
 
 					}
 
@@ -13838,6 +14033,7 @@
 						capturePending = null;
 						clearCaptureWatchdog();
 						if ( boundaryGroup ) boundaryGroup.visible = true;
+						captureTrace( 'failCapture: ' + message + ( error ? ' (' + formatCaptureError( error ) + ')' : '' ) );
 
 						if ( captureAttempts < 1 ) {
 
@@ -13971,7 +14167,14 @@
 						const camH = xrCamera.height;
 						const pixelCount = camW * camH;
 
-						if ( pixelCount <= 0 || pixelCount > MAX_CAMERA_READ_PIXELS ) return null;
+						if ( pixelCount <= 0 || pixelCount > MAX_CAMERA_READ_PIXELS ) {
+
+							captureTrace( 'readCamera: skipped ' + camW + 'x' + camH + ' (' + pixelCount + ' px)' );
+							return null;
+
+						}
+
+						captureTrace( 'readCamera: start ' + camW + 'x' + camH );
 
 						cameraAccessAvailable = false;
 						const byteCount = pixelCount * 4;
@@ -13990,13 +14193,16 @@
 
 							if ( gl.checkFramebufferStatus( gl.FRAMEBUFFER ) !== gl.FRAMEBUFFER_COMPLETE ) return null;
 
+							captureTrace( 'readCamera: readPixels ' + camW + 'x' + camH );
 							gl.readPixels( 0, 0, camW, camH, gl.RGBA, gl.UNSIGNED_BYTE, readPixels );
+							captureTrace( 'readCamera: readPixels done' );
 							cameraAccessAvailable = true;
 							cameraCanvas = cameraPixelsToDownscaledCanvas( readPixels, camW, camH, MAX_CAPTURE_DIM );
 							readPixels = null;
 
 						} catch ( _error ) {
 
+							captureTrace( 'readCamera: exception ' + formatCaptureError( _error ) );
 							return null;
 
 						} finally {
@@ -14017,6 +14223,7 @@
 
 						displayCtx.drawImage( cameraCanvas, 0, 0, target.width, target.height );
 						cameraReadbackPixels = null;
+						captureTrace( 'readCamera: ok ' + target.width + 'x' + target.height );
 						return displayCanvas;
 
 					}
@@ -14027,9 +14234,11 @@
 						if ( ! sourceCanvas.width || ! sourceCanvas.height ) return null;
 
 						const target = getScaledCaptureSize( sourceCanvas.width, sourceCanvas.height, MAX_CAPTURE_DIM );
+						captureTrace( 'acquireFrame: try camera ' + target.width + 'x' + target.height );
 						const cameraFrame = readCameraViewToDisplayCanvas( frame, target.width, target.height );
 						if ( cameraFrame ) return cameraFrame;
 
+						captureTrace( 'acquireFrame: fallback canvas snapshot' );
 						cameraAccessAvailable = false;
 						const frameCanvas = document.createElement( 'canvas' );
 						frameCanvas.width = target.width;
@@ -14224,6 +14433,7 @@
 
 					function finishCapture( frame ) {
 
+						captureTrace( 'finishCapture: start' );
 						let frameCanvas = null;
 						const viewCamera = getViewCamera();
 
@@ -14237,6 +14447,8 @@
 							return;
 
 						}
+
+						captureTrace( 'finishCapture: frame acquired, processing' );
 
 						const canvasToProcess = frameCanvas;
 						setTimeout( () => {
@@ -14259,6 +14471,18 @@
 
 						if ( phase !== 'capture' || capturePending ) return;
 						clearCaptureError();
+
+						if ( isAppDebugMode() ) {
+
+							try {
+
+								sessionStorage.removeItem( ROOM_BUILDER_DEBUG_STORAGE_KEY );
+
+							} catch ( _error ) {}
+
+						}
+
+						captureTrace( 'requestCapture' );
 						capturePending = { step: 'hide' };
 						startCaptureWatchdog();
 						updateHud( 'Preparing capture…' );
@@ -14271,6 +14495,7 @@
 
 						if ( capturePending.step === 'hide' ) {
 
+							captureTrace( 'capture step: hide boundary' );
 							if ( boundaryGroup ) boundaryGroup.visible = false;
 							capturePending.step = 'wait';
 							return;
@@ -14279,6 +14504,7 @@
 
 						if ( capturePending.step === 'wait' ) {
 
+							captureTrace( 'capture step: wait frame' );
 							capturePending.step = 'grab';
 							return;
 
@@ -14286,6 +14512,7 @@
 
 						if ( capturePending.step === 'grab' ) {
 
+							captureTrace( 'capture step: grab frame' );
 							capturePending = null;
 
 							try {
@@ -14395,6 +14622,8 @@
 							sessionStartTime = performance.now();
 							clearCaptureError();
 							attachCaptureErrorHandlers();
+							restoreCaptureTrace();
+							captureTrace( 'session start' );
 
 							scene.add( reticle );
 							controller1.addEventListener( 'select', onXRSelect );
