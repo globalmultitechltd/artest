@@ -1373,7 +1373,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:36</div>
+		<div id="version">version: 13:41</div>
 		<div id="debug-mode-badge" hidden>DEBUG</div>
 		<pre id="app-debug-log" hidden aria-live="polite"></pre>
 
@@ -13448,7 +13448,6 @@
 				const label = 'Room Builder';
 				const FIRST_POINT_CLOSE_RADIUS = 0.12;
 				const MAX_CAPTURE_DIM = 640;
-				const MAX_READ_PIXELS = 640 * 480;
 				const projectedPoint = new THREE.Vector3();
 				const captureCamera = new THREE.PerspectiveCamera();
 				const cornerPixels = [];
@@ -13529,6 +13528,7 @@
 					let cameraBlitFbo = null;
 					let cameraBlitTex = null;
 					let cameraBlitVbo = null;
+					let cameraBlitUniformTex = null;
 					let cameraBlitWidth = 0;
 					let cameraBlitHeight = 0;
 					let cameraAccessAvailable = false;
@@ -14038,19 +14038,18 @@
 						clearCaptureWatchdog();
 						if ( boundaryGroup ) boundaryGroup.visible = true;
 						captureTrace( 'failCapture: ' + message + ( error ? ' (' + formatCaptureError( error ) + ')' : '' ) );
-
-						if ( captureAttempts < 1 ) {
-
-							captureAttempts ++;
-							updateHud( ( message || 'Capture failed.' ) + ' Retrying…' );
-							requestCapture();
-							return;
-
-						}
-
 						captureAttempts = 0;
 						phase = 'failed';
 						showCaptureError( message || 'Capture failed. Exit and try again with a smaller shape.', error );
+
+					}
+
+					function deleteOrphanCaptureTexture( glTexture ) {
+
+						if ( ! glTexture ) return;
+
+						const gl = renderer.getContext();
+						if ( gl ) gl.deleteTexture( glTexture );
 
 					}
 
@@ -14216,6 +14215,7 @@
 						cameraBlitTex = null;
 						cameraBlitVbo = null;
 						cameraBlitProgram = null;
+						cameraBlitUniformTex = null;
 						cameraBlitWidth = 0;
 						cameraBlitHeight = 0;
 						xrGlBinding = null;
@@ -14236,6 +14236,11 @@
 
 							xrGlBinding = new XRWebGLBinding( xrSession, gl );
 							cameraBlitProgram = createCameraBlitProgram( gl );
+							if ( cameraBlitProgram ) {
+
+								cameraBlitUniformTex = gl.getUniformLocation( cameraBlitProgram, 'uTex' );
+
+							}
 							cameraBlitVbo = gl.createBuffer();
 							gl.bindBuffer( gl.ARRAY_BUFFER, cameraBlitVbo );
 							gl.bufferData( gl.ARRAY_BUFFER, new Float32Array( [
@@ -14255,7 +14260,22 @@
 
 					}
 
-					function readCameraViewToDisplayCanvas( frame, displayWidth, displayHeight ) {
+					function detachBlitTextureForCapture() {
+
+						const result = {
+							glTexture: cameraBlitTex,
+							width: cameraBlitWidth,
+							height: cameraBlitHeight
+						};
+						cameraBlitTex = null;
+						cameraBlitFbo = null;
+						cameraBlitWidth = 0;
+						cameraBlitHeight = 0;
+						return result;
+
+					}
+
+					function blitCameraToGpuTexture( frame, displayWidth, displayHeight ) {
 
 						if ( ! xrGlBinding || ! cameraBlitProgram || ! cameraBlitVbo || ! frame || ! xrSession ) {
 
@@ -14296,20 +14316,13 @@
 						const readW = target.width;
 						const readH = target.height;
 
-						if ( readW * readH > MAX_READ_PIXELS ) {
-
-							captureTrace( 'readCamera: output too large ' + readW + 'x' + readH );
-							return null;
-
-						}
-
-						captureTrace( 'readCamera: blit ' + camW + 'x' + camH + ' -> ' + readW + 'x' + readH );
+						captureTrace( 'readCamera: gpu blit ' + camW + 'x' + camH + ' -> ' + readW + 'x' + readH );
 
 						cameraAccessAvailable = false;
 						const previousFramebuffer = gl.getParameter( gl.FRAMEBUFFER_BINDING );
 						const previousViewport = gl.getParameter( gl.VIEWPORT );
 						const previousProgram = gl.getParameter( gl.CURRENT_PROGRAM );
-						let cameraCanvas = null;
+						let gpuFrame = null;
 
 						try {
 
@@ -14320,7 +14333,7 @@
 							gl.viewport( 0, 0, readW, readH );
 							gl.activeTexture( gl.TEXTURE0 );
 							gl.bindTexture( gl.TEXTURE_2D, cameraTexture );
-							gl.uniform1i( gl.getUniformLocation( cameraBlitProgram, 'uTex' ), 0 );
+							if ( cameraBlitUniformTex ) gl.uniform1i( cameraBlitUniformTex, 0 );
 
 							const aPos = gl.getAttribLocation( cameraBlitProgram, 'aPos' );
 							gl.bindBuffer( gl.ARRAY_BUFFER, cameraBlitVbo );
@@ -14331,13 +14344,9 @@
 
 							if ( gl.checkFramebufferStatus( gl.FRAMEBUFFER ) !== gl.FRAMEBUFFER_COMPLETE ) return null;
 
-							const byteCount = readW * readH * 4;
-							const readPixels = new Uint8Array( byteCount );
-							captureTrace( 'readCamera: readPixels ' + readW + 'x' + readH );
-							gl.readPixels( 0, 0, readW, readH, gl.RGBA, gl.UNSIGNED_BYTE, readPixels );
-							captureTrace( 'readCamera: readPixels done' );
 							cameraAccessAvailable = true;
-							cameraCanvas = cameraPixelsToDownscaledCanvas( readPixels, readW, readH, Math.max( readW, readH ) );
+							gpuFrame = detachBlitTextureForCapture();
+							captureTrace( 'readCamera: gpu blit done (no readPixels)' );
 
 						} catch ( _error ) {
 
@@ -14353,148 +14362,40 @@
 
 						}
 
-						if ( ! cameraCanvas ) return null;
-
-						captureTrace( 'readCamera: ok ' + cameraCanvas.width + 'x' + cameraCanvas.height );
-						return cameraCanvas;
+						return gpuFrame;
 
 					}
 
-					function acquireDisplayFrameCanvas( frame ) {
+					function applyCapturedTextureGpu( gpuFrame, viewCamera ) {
 
-						const sourceCanvas = renderer.domElement;
-						if ( ! sourceCanvas.width || ! sourceCanvas.height ) return null;
+						if ( ! floorMesh || ! gpuFrame || ! gpuFrame.glTexture ) return;
 
-						const target = getScaledCaptureSize( sourceCanvas.width, sourceCanvas.height, MAX_CAPTURE_DIM );
-						captureTrace( 'acquireFrame: try camera ' + target.width + 'x' + target.height );
-						const cameraFrame = readCameraViewToDisplayCanvas( frame, target.width, target.height );
-						if ( cameraFrame ) return cameraFrame;
+						if ( capturedTexture ) {
 
-						captureTrace( 'acquireFrame: fallback canvas snapshot' );
-						cameraAccessAvailable = false;
-						const frameCanvas = document.createElement( 'canvas' );
-						frameCanvas.width = target.width;
-						frameCanvas.height = target.height;
-						const frameCtx = frameCanvas.getContext( '2d' );
-						if ( ! frameCtx ) return null;
-
-						try {
-
-							frameCtx.drawImage( sourceCanvas, 0, 0, frameCanvas.width, frameCanvas.height );
-
-						} catch ( error ) {
-
-							throw new Error( 'Could not copy the on-screen AR view (' + formatCaptureError( error ) + ').' );
+							capturedTexture.dispose();
+							capturedTexture = null;
 
 						}
 
-						return frameCanvas;
-
-					}
-
-					function isFrameMostlyEmpty( canvas ) {
-
-						const ctx = canvas.getContext( '2d' );
-						if ( ! ctx || canvas.width < 8 || canvas.height < 8 ) return true;
-
-						const sample = ctx.getImageData(
-							Math.floor( canvas.width * 0.5 ) - 2,
-							Math.floor( canvas.height * 0.5 ) - 2,
-							4,
-							4
-						).data;
-						let darkCount = 0;
-
-						for ( let i = 0; i < sample.length; i += 4 ) {
-
-							if ( sample[ i ] + sample[ i + 1 ] + sample[ i + 2 ] < 24 && sample[ i + 3 ] < 16 ) darkCount ++;
-
-						}
-
-						return darkCount >= 12;
-
-					}
-
-					function cropPolygonFromFrameCanvas( frameCanvas, viewCamera ) {
-
-						const polygon = projectVerticesToPixels( viewCamera, frameCanvas.width, frameCanvas.height, cornerPixels );
-						let minX = Infinity;
-						let minY = Infinity;
-						let maxX = - Infinity;
-						let maxY = - Infinity;
-
-						for ( const point of polygon ) {
-
-							minX = Math.min( minX, point.x );
-							minY = Math.min( minY, point.y );
-							maxX = Math.max( maxX, point.x );
-							maxY = Math.max( maxY, point.y );
-
-						}
-
-						minX = THREE.MathUtils.clamp( Math.floor( minX ), 0, frameCanvas.width - 1 );
-						minY = THREE.MathUtils.clamp( Math.floor( minY ), 0, frameCanvas.height - 1 );
-						maxX = THREE.MathUtils.clamp( Math.ceil( maxX ), 1, frameCanvas.width );
-						maxY = THREE.MathUtils.clamp( Math.ceil( maxY ), 1, frameCanvas.height );
-
-						const cropWidth = Math.max( 1, maxX - minX );
-						const cropHeight = Math.max( 1, maxY - minY );
-						if ( cropWidth < 4 || cropHeight < 4 ) return null;
-
-						const croppedCanvas = document.createElement( 'canvas' );
-						croppedCanvas.width = cropWidth;
-						croppedCanvas.height = cropHeight;
-						const cropCtx = croppedCanvas.getContext( '2d' );
-						if ( ! cropCtx ) return null;
-
-						cropCtx.save();
-						cropCtx.beginPath();
-
-						for ( let i = 0; i < polygon.length; i ++ ) {
-
-							const px = polygon[ i ].x - minX;
-							const py = polygon[ i ].y - minY;
-							if ( i === 0 ) cropCtx.moveTo( px, py );
-							else cropCtx.lineTo( px, py );
-
-						}
-
-						cropCtx.closePath();
-						cropCtx.clip();
-						cropCtx.drawImage( frameCanvas, - minX, - minY );
-						cropCtx.restore();
-
-						return {
-							canvas: croppedCanvas,
-							minX,
-							minY,
-							cropWidth,
-							cropHeight,
-							canvasWidth: frameCanvas.width,
-							canvasHeight: frameCanvas.height,
-							viewCamera
-						};
-
-					}
-
-					function applyCapturedTexture( cropResult ) {
-
-						if ( ! floorMesh ) return;
-
-						if ( capturedTexture ) capturedTexture.dispose();
-
-						capturedTexture = new THREE.CanvasTexture( cropResult.canvas );
+						capturedTexture = new THREE.Texture();
+						capturedTexture.image = { width: gpuFrame.width, height: gpuFrame.height };
+						capturedTexture.format = THREE.RGBAFormat;
+						capturedTexture.type = THREE.UnsignedByteType;
 						configureCapturedTexture( capturedTexture );
+
+						const textureProperties = renderer.properties.get( capturedTexture );
+						textureProperties.__webglTexture = gpuFrame.glTexture;
+						textureProperties.__version = 0;
 
 						applyCaptureUVs(
 							floorMesh.geometry,
-							cropResult.viewCamera,
-							cropResult.minX,
-							cropResult.minY,
-							cropResult.cropWidth,
-							cropResult.cropHeight,
-							cropResult.canvasWidth,
-							cropResult.canvasHeight
+							viewCamera,
+							0,
+							0,
+							gpuFrame.width,
+							gpuFrame.height,
+							gpuFrame.width,
+							gpuFrame.height
 						);
 
 						floorMesh.material.dispose();
@@ -14506,13 +14407,13 @@
 
 					}
 
-					function finishCaptureFromCanvas( frameCanvas, viewCamera ) {
+					function finishCaptureFromGpu( gpuFrame, viewCamera ) {
 
 						try {
 
 							syncCaptureCamera( viewCamera );
 
-							if ( ! frameCanvas ) {
+							if ( ! gpuFrame || ! gpuFrame.glTexture ) {
 
 								failCapture( 'Capture failed: could not read the AR camera on this device.', 'no-frame' );
 								return;
@@ -14521,6 +14422,7 @@
 
 							if ( ! cameraAccessAvailable ) {
 
+								deleteOrphanCaptureTexture( gpuFrame.glTexture );
 								failCapture(
 									'Capture failed: AR camera access is unavailable. Use Chrome on Android with camera-access enabled, then try again.',
 									'no-camera-access'
@@ -14529,25 +14431,11 @@
 
 							}
 
-							if ( isFrameMostlyEmpty( frameCanvas ) ) {
-
-								failCapture( 'Capture failed: camera frame looked empty. Keep the shape in view and try again.', 'empty-view' );
-								return;
-
-							}
-
-							const cropResult = cropPolygonFromFrameCanvas( frameCanvas, captureCamera );
-							if ( ! cropResult ) {
-
-								failCapture( 'Capture too small. Frame the full shape on screen, then close it again.', 'crop-too-small' );
-								return;
-
-							}
-
-							applyCapturedTexture( cropResult );
+							applyCapturedTextureGpu( gpuFrame, captureCamera );
 
 						} catch ( error ) {
 
+							deleteOrphanCaptureTexture( gpuFrame ? gpuFrame.glTexture : null );
 							failCapture( 'Capture failed while applying the image.', error );
 							return;
 
@@ -14566,12 +14454,19 @@
 					function finishCapture( frame ) {
 
 						captureTrace( 'finishCapture: start' );
-						let frameCanvas = null;
 						const viewCamera = getViewCamera();
+						const sourceCanvas = renderer.domElement;
+						const target = getScaledCaptureSize(
+							sourceCanvas.width || window.innerWidth,
+							sourceCanvas.height || window.innerHeight,
+							MAX_CAPTURE_DIM
+						);
+
+						let gpuFrame = null;
 
 						try {
 
-							frameCanvas = acquireDisplayFrameCanvas( frame );
+							gpuFrame = blitCameraToGpuTexture( frame, target.width, target.height );
 
 						} catch ( error ) {
 
@@ -14580,22 +14475,8 @@
 
 						}
 
-						captureTrace( 'finishCapture: frame acquired, processing' );
-
-						const canvasToProcess = frameCanvas;
-						setTimeout( () => {
-
-							try {
-
-								finishCaptureFromCanvas( canvasToProcess, viewCamera );
-
-							} catch ( error ) {
-
-								failCapture( 'Capture failed while processing the image.', error );
-
-							}
-
-						}, 0 );
+						captureTrace( 'finishCapture: gpu frame acquired, applying' );
+						finishCaptureFromGpu( gpuFrame, viewCamera );
 
 					}
 
