@@ -1373,7 +1373,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:49</div>
+		<div id="version">version: 13:53</div>
 		<div id="debug-mode-badge" hidden>DEBUG</div>
 		<pre id="app-debug-log" hidden aria-live="polite"></pre>
 
@@ -13568,7 +13568,14 @@
 						try {
 
 							const saved = sessionStorage.getItem( ROOM_BUILDER_DEBUG_STORAGE_KEY );
-							if ( saved ) appDebugLog( '[RoomBuilder] restored trace:\n' + saved );
+							if ( saved ) {
+
+								appDebugLog( '[RoomBuilder] restored trace:\n' + saved );
+
+								if ( errorMessageEl ) errorMessageEl.textContent = 'Last capture trace before crash:\n\n' + saved;
+								if ( errorPanel ) errorPanel.classList.add( 'visible' );
+
+							}
 
 						} catch ( _error ) {}
 
@@ -14096,8 +14103,14 @@
 						}
 
 						const referenceSpace = renderer.xr.getReferenceSpace();
+						captureTrace( 'readCamera: getViewerPose' );
 						const pose = frame.getViewerPose( referenceSpace );
-						if ( ! pose ) return null;
+						if ( ! pose ) {
+
+							captureTrace( 'readCamera: no pose' );
+							return null;
+
+						}
 
 						const gl = renderer.getContext();
 						let cameraView = null;
@@ -14113,10 +14126,17 @@
 
 						}
 
-						if ( ! cameraView || ! cameraView.camera ) return null;
+						if ( ! cameraView || ! cameraView.camera ) {
+
+							captureTrace( 'readCamera: no camera view (camera-access off?)' );
+							return null;
+
+						}
 
 						const xrCamera = cameraView.camera;
+						captureTrace( 'readCamera: camera ' + xrCamera.width + 'x' + xrCamera.height + ', getCameraImage…' );
 						const cameraTexture = xrGlBinding.getCameraImage( xrCamera );
+						captureTrace( 'readCamera: getCameraImage returned ' + ( cameraTexture ? 'texture' : 'null' ) );
 						if ( ! cameraTexture ) return null;
 
 						const camW = xrCamera.width;
@@ -14127,15 +14147,18 @@
 
 						if ( ! cameraReadbackPixels || cameraReadbackPixels.length !== byteCount ) {
 
+							captureTrace( 'readCamera: alloc ' + byteCount + ' bytes' );
 							cameraReadbackPixels = new Uint8Array( byteCount );
 
 						}
 
 						const previousFramebuffer = gl.getParameter( gl.FRAMEBUFFER_BINDING );
+						captureTrace( 'readCamera: bind fbo + framebufferTexture2D' );
 						gl.bindTexture( gl.TEXTURE_2D, cameraTexture );
 						gl.bindFramebuffer( gl.FRAMEBUFFER, cameraReadbackFbo );
 						gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, cameraTexture, 0 );
 
+						captureTrace( 'readCamera: checkFramebufferStatus' );
 						if ( gl.checkFramebufferStatus( gl.FRAMEBUFFER ) !== gl.FRAMEBUFFER_COMPLETE ) {
 
 							gl.bindFramebuffer( gl.FRAMEBUFFER, previousFramebuffer );
