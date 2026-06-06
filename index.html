@@ -1373,7 +1373,7 @@
 	<body>
 
 		<!-- REQUIRED on every edit: bump version to current local time (HH:mm). See file header note. -->
-		<div id="version">version: 13:53</div>
+		<div id="version">version: 14:23</div>
 		<div id="debug-mode-badge" hidden>DEBUG</div>
 		<pre id="app-debug-log" hidden aria-live="polite"></pre>
 
@@ -13523,9 +13523,9 @@
 					let sessionStartTime = 0;
 
 					let xrSession = null;
-					let xrGlBinding = null;
-					let cameraReadbackFbo = null;
-					let cameraReadbackPixels = null;
+					let captureStream = null;
+					let captureVideo = null;
+					let captureStreamRequested = false;
 					let cameraAccessAvailable = false;
 
 					const vertices = [];
@@ -14060,146 +14060,159 @@
 
 					}
 
-					function cameraPixelsToCanvas( pixels, width, height ) {
+					function drawVideoCover( ctx, video, targetWidth, targetHeight ) {
 
-						const canvas = document.createElement( 'canvas' );
-						canvas.width = width;
-						canvas.height = height;
-						const ctx = canvas.getContext( '2d' );
-						if ( ! ctx ) return null;
+						const vw = video.videoWidth;
+						const vh = video.videoHeight;
+						if ( ! vw || ! vh ) return false;
 
-						const imageData = ctx.createImageData( width, height );
-						const data = imageData.data;
-
-						for ( let y = 0; y < height; y ++ ) {
-
-							const srcRow = height - 1 - y;
-
-							for ( let x = 0; x < width; x ++ ) {
-
-								const srcIndex = ( srcRow * width + x ) * 4;
-								const dstIndex = ( y * width + x ) * 4;
-								data[ dstIndex ] = pixels[ srcIndex ];
-								data[ dstIndex + 1 ] = pixels[ srcIndex + 1 ];
-								data[ dstIndex + 2 ] = pixels[ srcIndex + 2 ];
-								data[ dstIndex + 3 ] = 255;
-
-							}
-
-						}
-
-						ctx.putImageData( imageData, 0, 0 );
-						return canvas;
+						const scale = Math.max( targetWidth / vw, targetHeight / vh );
+						const drawW = vw * scale;
+						const drawH = vh * scale;
+						const dx = ( targetWidth - drawW ) / 2;
+						const dy = ( targetHeight - drawH ) / 2;
+						ctx.drawImage( video, dx, dy, drawW, drawH );
+						return true;
 
 					}
 
-					function readCameraViewToDisplayCanvas( frame, displayWidth, displayHeight ) {
-
-						if ( ! xrGlBinding || ! cameraReadbackFbo || ! frame || ! xrSession ) {
-
-							captureTrace( 'readCamera: unavailable (binding/fbo/frame/session)' );
-							return null;
-
-						}
-
-						const referenceSpace = renderer.xr.getReferenceSpace();
-						captureTrace( 'readCamera: getViewerPose' );
-						const pose = frame.getViewerPose( referenceSpace );
-						if ( ! pose ) {
-
-							captureTrace( 'readCamera: no pose' );
-							return null;
-
-						}
-
-						const gl = renderer.getContext();
-						let cameraView = null;
-
-						for ( const view of pose.views ) {
-
-							if ( view.camera ) {
-
-								cameraView = view;
-								break;
-
-							}
-
-						}
-
-						if ( ! cameraView || ! cameraView.camera ) {
-
-							captureTrace( 'readCamera: no camera view (camera-access off?)' );
-							return null;
-
-						}
-
-						const xrCamera = cameraView.camera;
-						captureTrace( 'readCamera: camera ' + xrCamera.width + 'x' + xrCamera.height + ', getCameraImage…' );
-						const cameraTexture = xrGlBinding.getCameraImage( xrCamera );
-						captureTrace( 'readCamera: getCameraImage returned ' + ( cameraTexture ? 'texture' : 'null' ) );
-						if ( ! cameraTexture ) return null;
-
-						const camW = xrCamera.width;
-						const camH = xrCamera.height;
-						if ( camW <= 0 || camH <= 0 ) return null;
-
-						const byteCount = camW * camH * 4;
-
-						if ( ! cameraReadbackPixels || cameraReadbackPixels.length !== byteCount ) {
-
-							captureTrace( 'readCamera: alloc ' + byteCount + ' bytes' );
-							cameraReadbackPixels = new Uint8Array( byteCount );
-
-						}
-
-						const previousFramebuffer = gl.getParameter( gl.FRAMEBUFFER_BINDING );
-						captureTrace( 'readCamera: bind fbo + framebufferTexture2D' );
-						gl.bindTexture( gl.TEXTURE_2D, cameraTexture );
-						gl.bindFramebuffer( gl.FRAMEBUFFER, cameraReadbackFbo );
-						gl.framebufferTexture2D( gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, cameraTexture, 0 );
-
-						captureTrace( 'readCamera: checkFramebufferStatus' );
-						if ( gl.checkFramebufferStatus( gl.FRAMEBUFFER ) !== gl.FRAMEBUFFER_COMPLETE ) {
-
-							gl.bindFramebuffer( gl.FRAMEBUFFER, previousFramebuffer );
-							gl.bindTexture( gl.TEXTURE_2D, null );
-							captureTrace( 'readCamera: framebuffer incomplete' );
-							return null;
-
-						}
-
-						captureTrace( 'readCamera: readPixels ' + camW + 'x' + camH );
-						gl.readPixels( 0, 0, camW, camH, gl.RGBA, gl.UNSIGNED_BYTE, cameraReadbackPixels );
-						gl.bindFramebuffer( gl.FRAMEBUFFER, previousFramebuffer );
-						gl.bindTexture( gl.TEXTURE_2D, null );
-						captureTrace( 'readCamera: readPixels done' );
-
-						cameraAccessAvailable = true;
-
-						const cameraCanvas = cameraPixelsToCanvas( cameraReadbackPixels, camW, camH );
-						if ( ! cameraCanvas ) return null;
-
-						const displayCanvas = document.createElement( 'canvas' );
-						displayCanvas.width = displayWidth;
-						displayCanvas.height = displayHeight;
-						const displayCtx = displayCanvas.getContext( '2d' );
-						if ( ! displayCtx ) return null;
-
-						displayCtx.drawImage( cameraCanvas, 0, 0, displayWidth, displayHeight );
-						captureTrace( 'readCamera: ok ' + displayWidth + 'x' + displayHeight );
-						return displayCanvas;
-
-					}
-
-					function acquireDisplayFrameCanvas( frame ) {
+					function acquireDisplayFrameCanvas() {
 
 						const sourceCanvas = renderer.domElement;
 						const baseWidth = sourceCanvas.width || window.innerWidth;
 						const baseHeight = sourceCanvas.height || window.innerHeight;
 						const target = getScaledCaptureSize( baseWidth, baseHeight, MAX_CAPTURE_DIM );
 
-						captureTrace( 'acquireFrame: try camera ' + target.width + 'x' + target.height );
-						return readCameraViewToDisplayCanvas( frame, target.width, target.height );
+						if ( ! captureVideo || ! captureVideo.videoWidth || ! captureVideo.videoHeight ) {
+
+							captureTrace( 'acquireFrame: no camera stream available' );
+							cameraAccessAvailable = false;
+							return null;
+
+						}
+
+						captureTrace( 'acquireFrame: using camera stream ' + captureVideo.videoWidth + 'x' + captureVideo.videoHeight );
+
+						const canvas = document.createElement( 'canvas' );
+						canvas.width = target.width;
+						canvas.height = target.height;
+						const ctx = canvas.getContext( '2d' );
+						if ( ! ctx ) return null;
+
+						try {
+
+							if ( ! drawVideoCover( ctx, captureVideo, target.width, target.height ) ) {
+
+								cameraAccessAvailable = false;
+								return null;
+
+							}
+
+						} catch ( error ) {
+
+							captureTrace( 'acquireFrame: video draw failed ' + formatCaptureError( error ) );
+							cameraAccessAvailable = false;
+							return null;
+
+						}
+
+						cameraAccessAvailable = true;
+						captureTrace( 'acquireFrame: camera frame ' + target.width + 'x' + target.height );
+						return canvas;
+
+					}
+
+					function buildGeneratedFloorCanvas() {
+
+						const canvas = document.createElement( 'canvas' );
+						canvas.width = 256;
+						canvas.height = 256;
+						const ctx = canvas.getContext( '2d' );
+						if ( ! ctx ) return null;
+
+						ctx.fillStyle = '#1f2937';
+						ctx.fillRect( 0, 0, 256, 256 );
+
+						const gradient = ctx.createLinearGradient( 0, 0, 256, 256 );
+						gradient.addColorStop( 0, '#334155' );
+						gradient.addColorStop( 1, '#1e293b' );
+						ctx.fillStyle = gradient;
+						ctx.fillRect( 0, 0, 256, 256 );
+
+						ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+						ctx.lineWidth = 2;
+
+						for ( let i = 0; i <= 256; i += 32 ) {
+
+							ctx.beginPath();
+							ctx.moveTo( i, 0 );
+							ctx.lineTo( i, 256 );
+							ctx.stroke();
+							ctx.beginPath();
+							ctx.moveTo( 0, i );
+							ctx.lineTo( 256, i );
+							ctx.stroke();
+
+						}
+
+						return canvas;
+
+					}
+
+					function applyPlanarFloorUVs( geometry ) {
+
+						const position = geometry.attributes.position;
+						let minX = Infinity;
+						let minZ = Infinity;
+						let maxX = - Infinity;
+						let maxZ = - Infinity;
+
+						for ( let i = 0; i < position.count; i ++ ) {
+
+							const x = position.getX( i );
+							const z = position.getZ( i );
+							minX = Math.min( minX, x );
+							maxX = Math.max( maxX, x );
+							minZ = Math.min( minZ, z );
+							maxZ = Math.max( maxZ, z );
+
+						}
+
+						const spanX = Math.max( 0.0001, maxX - minX );
+						const spanZ = Math.max( 0.0001, maxZ - minZ );
+						const uvArray = new Float32Array( position.count * 2 );
+
+						for ( let i = 0; i < position.count; i ++ ) {
+
+							uvArray[ i * 2 ] = ( position.getX( i ) - minX ) / spanX;
+							uvArray[ i * 2 + 1 ] = ( position.getZ( i ) - minZ ) / spanZ;
+
+						}
+
+						geometry.setAttribute( 'uv', new THREE.BufferAttribute( uvArray, 2 ) );
+
+					}
+
+					function applyGeneratedFloorTexture() {
+
+						if ( ! floorMesh ) return;
+
+						if ( capturedTexture ) capturedTexture.dispose();
+
+						const canvas = buildGeneratedFloorCanvas();
+						if ( ! canvas ) return;
+
+						capturedTexture = new THREE.CanvasTexture( canvas );
+						configureCapturedTexture( capturedTexture );
+						applyPlanarFloorUVs( floorMesh.geometry );
+
+						floorMesh.material.dispose();
+						floorMesh.material = new THREE.MeshBasicMaterial( {
+							map: capturedTexture,
+							transparent: true,
+							opacity: 0.92,
+							side: THREE.DoubleSide
+						} );
 
 					}
 
@@ -14293,37 +14306,64 @@
 
 					}
 
-					function disposeCameraReadback() {
+					function disposeCameraStream() {
 
-						const gl = renderer.getContext();
-						if ( cameraReadbackFbo && gl ) gl.deleteFramebuffer( cameraReadbackFbo );
-						cameraReadbackFbo = null;
-						cameraReadbackPixels = null;
-						xrGlBinding = null;
+						if ( captureStream ) {
+
+							for ( const track of captureStream.getTracks() ) track.stop();
+
+						}
+
+						if ( captureVideo ) {
+
+							captureVideo.srcObject = null;
+							captureVideo = null;
+
+						}
+
+						captureStream = null;
+						captureStreamRequested = false;
 						cameraAccessAvailable = false;
 
 					}
 
-					function initCameraReadback() {
+					function requestCameraStream() {
 
-						disposeCameraReadback();
-						xrSession = renderer.xr.getSession();
-						if ( ! xrSession || typeof XRWebGLBinding === 'undefined' ) return;
+						if ( captureStreamRequested ) return;
+						captureStreamRequested = true;
 
-						const gl = renderer.getContext();
-						if ( ! gl ) return;
+						if ( ! navigator.mediaDevices || ! navigator.mediaDevices.getUserMedia ) {
 
-						try {
-
-							xrGlBinding = new XRWebGLBinding( xrSession, gl );
-							cameraReadbackFbo = gl.createFramebuffer();
-
-						} catch {
-
-							xrGlBinding = null;
-							cameraReadbackFbo = null;
+							captureTrace( 'cameraStream: getUserMedia unsupported' );
+							return;
 
 						}
+
+						captureTrace( 'cameraStream: requesting getUserMedia' );
+
+						navigator.mediaDevices.getUserMedia( {
+							video: { facingMode: { ideal: 'environment' } },
+							audio: false
+						} ).then( function ( stream ) {
+
+							captureStream = stream;
+							const video = document.createElement( 'video' );
+							video.setAttribute( 'playsinline', '' );
+							video.muted = true;
+							video.srcObject = stream;
+							captureVideo = video;
+
+							const playPromise = video.play();
+							if ( playPromise && playPromise.catch ) playPromise.catch( function () {} );
+							captureTrace( 'cameraStream: stream acquired' );
+
+						} ).catch( function ( error ) {
+
+							captureTrace( 'cameraStream: getUserMedia failed ' + formatCaptureError( error ) );
+							captureStream = null;
+							captureVideo = null;
+
+						} );
 
 					}
 
@@ -14337,55 +14377,57 @@
 
 						try {
 
-							frameCanvas = acquireDisplayFrameCanvas( frame );
+							frameCanvas = acquireDisplayFrameCanvas();
 
 						} catch ( error ) {
 
-							failCapture( 'Capture failed while reading the AR camera.', error );
-							return;
+							captureTrace( 'finishCapture: acquire failed ' + formatCaptureError( error ) );
+							frameCanvas = null;
 
 						}
 
-						if ( ! frameCanvas || ! cameraAccessAvailable ) {
+						let applied = false;
 
-							failCapture(
-								'Capture failed: AR camera access is unavailable. Use Chrome on Android with camera-access enabled, then try again.',
-								'no-camera-access'
-							);
-							return;
+						if ( frameCanvas && cameraAccessAvailable ) {
 
-						}
+							try {
 
-						captureTrace( 'finishCapture: frame acquired, cropping' );
+								const cropResult = cropPolygonFromFrameCanvas( frameCanvas, captureCamera );
 
-						let cropResult = null;
+								if ( cropResult ) {
 
-						try {
+									applyCapturedTexture( cropResult, captureCamera );
+									applied = true;
+									captureTrace( 'finishCapture: applied camera texture' );
 
-							cropResult = cropPolygonFromFrameCanvas( frameCanvas, captureCamera );
+								} else {
 
-						} catch ( error ) {
+									captureTrace( 'finishCapture: crop too small, using generated texture' );
 
-							failCapture( 'Capture failed while cropping the image.', error );
-							return;
+								}
 
-						}
+							} catch ( error ) {
 
-						if ( ! cropResult ) {
+								captureTrace( 'finishCapture: camera apply failed ' + formatCaptureError( error ) );
 
-							failCapture( 'Capture too small. Frame the full shape on screen, then close it again.', 'crop-too-small' );
-							return;
+							}
 
 						}
 
-						try {
+						if ( ! applied ) {
 
-							applyCapturedTexture( cropResult, captureCamera );
+							try {
 
-						} catch ( error ) {
+								applyGeneratedFloorTexture();
+								applied = true;
+								captureTrace( 'finishCapture: applied generated texture' );
 
-							failCapture( 'Capture failed while applying the image.', error );
-							return;
+							} catch ( error ) {
+
+								failCapture( 'Capture failed while applying the floor texture.', error );
+								return;
+
+							}
 
 						}
 
@@ -14524,7 +14566,7 @@
 						clearCaptureWatchdog();
 						clearCaptureError();
 						detachCaptureErrorHandlers();
-						disposeCameraReadback();
+						disposeCameraStream();
 						vertices.length = 0;
 						phase = 'waiting';
 						bearingsReady = false;
@@ -14562,7 +14604,7 @@
 							controller1.addEventListener( 'select', onXRSelect );
 							controller2.addEventListener( 'select', onXRSelect );
 							renderer.domElement.addEventListener( 'pointerdown', onPointerDown );
-							initCameraReadback();
+							requestCameraStream();
 							updateHud();
 
 						},
